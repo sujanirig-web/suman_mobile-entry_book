@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RE-LiFE | ENTRY-BOOK</title>
+<script src="https://cdn.jsdelivr.net/npm/nepali-date-converter/dist/nepali-date-converter.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="min-h-screen pb-12">
+
+    <nav class="sticky top-0 z-50 glass border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
+                    <i class="fas fa-bolt-lightning text-white"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-none tracking-tight">ProRepair</h1>
+                    <span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Master Dashboard</span>
+                </div>
+            </div>
+            <button onclick="toggleModal('entryModal')" class="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-all flex items-center shadow-lg shadow-indigo-100 active:scale-95">
+                <i class="fas fa-plus-circle mr-2"></i> New Repair
+            </button>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto p-4 md:p-8">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            <div onclick="setTab('all')" id="card-all" class="stat-card active-tab glass p-6 rounded-3xl shadow-sm relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 text-slate-100 text-7xl group-hover:scale-110"><i class="fas fa-layer-group"></i></div>
+                <p class="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Total Entries</p>
+                <h3 class="text-3xl font-extrabold text-slate-800" id="stat-total">0</h3>
+            </div>
+            <div onclick="setTab('pending')" id="card-pending" class="stat-card glass p-6 rounded-3xl shadow-sm relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 text-orange-100 text-7xl group-hover:scale-110"><i class="fas fa-clock"></i></div>
+                <p class="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Pending</p>
+                <h3 class="text-3xl font-extrabold text-orange-600" id="stat-active">0</h3>
+            </div>
+            <div onclick="setTab('fixed')" id="card-fixed" class="stat-card glass p-6 rounded-3xl shadow-sm relative overflow-hidden group">
+                <div class="absolute -right-4 -top-4 text-emerald-100 text-7xl group-hover:scale-110"><i class="fas fa-circle-check"></i></div>
+                <p class="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Fixed</p>
+                <h3 class="text-3xl font-extrabold text-emerald-600" id="stat-fixed-count">0</h3>
+            </div>
+            <div class="bg-slate-900 p-6 rounded-3xl relative overflow-hidden">
+                <p class="text-slate-400 text-xs font-bold uppercase mb-1">Revenue</p>
+                <h3 class="text-3xl font-extrabold text-white" id="stat-revenue">रू0</h3>
+            </div>
+        </div>
+
+        <div class="mb-8 flex flex-col md:flex-row gap-6 items-center justify-between">
+            <div class="flex gap-4 w-full md:w-auto">
+                <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Search..." class="w-full md:w-80 pl-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm shadow-sm">
+                <select id="statusFilter" onchange="filterTable()" class="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium">
+                    <option value="all">Filter: All</option>
+                    <option value="credit">Due Payment</option>
+                </select>
+            </div>
+            <div class="bg-red-50 px-6 py-3 rounded-2xl flex items-center gap-4 border border-red-100">
+                <i class="fas fa-hand-holding-dollar text-red-500"></i>
+                <h4 class="text-lg font-bold text-red-600" id="stat-credit">रू0</h4>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b">
+                            <th class="px-8 py-5">Ticket</th>
+                            <th class="px-6 py-5">Customer</th>
+                            <th class="px-6 py-5">Issue & Media</th>
+                            <th class="px-6 py-5">Status</th>
+                            <th class="px-6 py-5">Payment</th>
+                            <th class="px-8 py-5 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="repairTableBody" class="divide-y"></tbody>
+                </table>
+            </div>
+            <div id="noDataMessage" class="hidden py-20 text-center text-slate-400">No repairs found</div>
+        </div>
+    </main>
+
+    <div id="entryModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onclick="toggleModal('entryModal')"></div>
+        <div class="bg-white w-full max-w-2xl rounded-[2rem] relative z-10 overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="bg-indigo-600 p-6 text-white flex justify-between">
+                <h2 id="modalTitle" class="text-xl font-bold">New Repair Job</h2>
+                <button onclick="toggleModal('entryModal')"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="repairForm" class="p-8 grid grid-cols-1 md:grid-cols-2 gap-4 overflow-y-auto">
+                <input type="text" id="customerName" placeholder="Client Name" required class="p-3 bg-slate-50 border rounded-xl outline-none text-sm">
+                <input type="tel" id="customerPhone" placeholder="Phone" required class="p-3 bg-slate-50 border rounded-xl outline-none text-sm">
+                <input type="text" id="deviceModel" placeholder="Device Model" required class="p-3 bg-slate-50 border rounded-xl outline-none text-sm">
+                <input type="text" id="snNumber" placeholder="Serial Number" class="p-3 bg-slate-50 border rounded-xl outline-none text-sm uppercase">
+                <div class="md:col-span-2">
+                    <input type="text" id="issueType" placeholder="Describe the issue" required class="w-full p-3 bg-slate-50 border rounded-xl outline-none text-sm">
+                </div>
+                
+                <div class="md:col-span-2 space-y-2">
+                    <label class="text-[10px] font-extrabold text-slate-400 uppercase">Device Photos</label>
+                    <div class="flex gap-2">
+                        <input type="file" id="photoGallery" accept="image/*" class="hidden" onchange="handleImageUpload(this)">
+                        <input type="file" id="photoCamera" accept="image/*" capture="environment" class="hidden" onchange="handleImageUpload(this)">
+                        <button type="button" onclick="document.getElementById('photoGallery').click()" class="flex-1 py-3 bg-slate-100 rounded-xl text-xs font-bold text-slate-600"><i class="fas fa-images mr-1"></i> Gallery</button>
+                        <button type="button" onclick="document.getElementById('photoCamera').click()" class="flex-1 py-3 bg-slate-100 rounded-xl text-xs font-bold text-slate-600"><i class="fas fa-camera mr-1"></i> Camera</button>
+                    </div>
+                    <div id="imagePreview" class="hidden relative w-20 h-20 rounded-lg border overflow-hidden">
+                        <img id="previewImg" src="" class="w-full h-full object-cover">
+                        <button type="button" onclick="removeImage()" class="absolute top-0 right-0 bg-red-500 text-white p-1 text-[8px]"><i class="fas fa-times"></i></button>
+                    </div>
+                </div>
+
+                <input type="number" id="cost" placeholder="Total Cost (रू)" class="p-3 bg-slate-50 border rounded-xl text-sm font-bold">
+                <input type="number" id="paid" placeholder="Amount Paid (रू)" class="p-3 bg-indigo-50 border-indigo-100 rounded-xl text-sm font-bold text-indigo-600">
+                <button type="submit" class="md:col-span-2 bg-slate-900 text-white py-4 rounded-2xl font-bold">Log Entry</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="viewImageModal" class="hidden fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-md" onclick="toggleModal('viewImageModal')">
+        <img id="fullSizeImage" src="" class="max-w-full max-h-full rounded-lg">
+    </div>
+
+    <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 translate-y-20 opacity-0 transition-all pointer-events-none z-[100]">
+        <div class="bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl text-sm font-semibold" id="toastMessage"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

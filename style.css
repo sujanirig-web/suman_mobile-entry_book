@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --background: #fdfdff;
+}
+
+body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background-color: var(--background);
+    color: #1e293b;
+}
+
+.glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.stat-card {
+    transition: all 0.3s ease;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+
+.stat-card:hover { transform: translateY(-4px); }
+
+.stat-card.active-tab {
+    border-color: var(--primary);
+    background: #f5f3ff;
+    box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.1);
+}
+
+.status-pill {
+    padding: 6px 14px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-pending { background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; }
+.status-repairing { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
+.status-completed { background: #f0fdf4; color: #15803d; border: 1px solid #dcfce7; }
+.status-cancelled { background: #fef2f2; color: #b91c1c; border: 1px solid #fee2e2; }
+
+.table-row-hover:hover { background-color: #5fee6b; }
