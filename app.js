@@ -58,12 +58,12 @@ function setTab(tab) {
     currentTab = tab;
 
     document.querySelectorAll('.stat-card').forEach(card => {
-        card.classList.remove('active-tab', 'ring-2', 'ring-indigo-600');
+        card.classList.remove('active-tab', 'ring-2', 'ring-green-600');
     });
 
     const activeCard = document.getElementById(`card-${tab}`);
     if (activeCard) {
-        activeCard.classList.add('active-tab', 'ring-2', 'ring-indigo-600');
+        activeCard.classList.add('active-tab', 'ring-2', 'ring-green-600');
     }
 
     window.filterTable();
@@ -194,7 +194,7 @@ function renderTable(data = repairs) {
         tr.innerHTML = `
             <td class="px-8 py-6">
                 <div class="text-xs font-bold text-slate-400">#${repair.id}</div>
-                <div class="text-[10px] font-bold text-indigo-600 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
+                <div class="text-[10px] font-bold text-green-600 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
                 <div class="text-[9px] font-bold text-slate-400 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
             </td>
             <td class="px-6 py-6">
