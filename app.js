@@ -1,70 +1,141 @@
-const STORAGE_KEY = 'relife_entrybook_v1';
+// --- 1. FIREBASE IMPORTS ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDFEwq_evYAot2DEtErBO58u6ABWBjVZ5M",
+    authDomain: "relife-entry-book.firebaseapp.com",
+    projectId: "relife-entry-book",
+    storageBucket: "relife-entry-book.firebasestorage.app",
+    messagingSenderId: "736685646269",
+    appId: "1:736685646269:web:387441b954cd4f123f72d4"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth();
+
+
+// --- 2. GLOBAL STATE ---
 let repairs = [];
 let currentTab = 'all';
 let currentImageData = null;
-let currentlyEditingId = null; // Track if we are editing
+let currentlyEditingId = null;
 
-// IMAGE HANDLING
-function handleImageUpload(input) {
+// --- 3. AUTH GATEKEEPER ---
+onAuthStateChanged(auth, (user) => {
+    console.log("USER:", user); // 👈 ADD THIS
+
+    const overlay = document.getElementById('loginOverlay');
+    if (overlay) {
+        if (user) {
+            overlay.style.display = 'none';
+            loadData(); 
+        } else {
+            overlay.style.display = 'flex';
+            repairs = [];
+            window.filterTable();
+        }
+    }
+});
+
+
+// --- 4. DATA CORE (FIREBASE SYNC) ---
+function loadData() {
+    const repairsCol = collection(db, "repairs");
+    onSnapshot(repairsCol, (snapshot) => {
+        repairs = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            firebaseDocId: doc.id
+        }));
+        repairs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        window.filterTable();
+    });
+
+}
+function setTab(tab) {
+    currentTab = tab;
+
+    document.querySelectorAll('.stat-card').forEach(card => {
+        card.classList.remove('active-tab', 'ring-2', 'ring-indigo-600');
+    });
+
+    const activeCard = document.getElementById(`card-${tab}`);
+    if (activeCard) {
+        activeCard.classList.add('active-tab', 'ring-2', 'ring-indigo-600');
+    }
+
+    window.filterTable();
+}
+
+// 👇 make it visible to HTML
+window.setTab = setTab;
+
+
+// --- 5. EXPORTING ALL FUNCTIONS TO WINDOW (Fixes "Not Defined" Errors) ---
+
+window.toggleModal = function(id) {
+    const modal = document.getElementById(id);
+    if (modal) {
+        modal.classList.toggle('hidden');
+        if (modal.classList.contains('hidden')) {
+            const form = document.getElementById('repairForm');
+            if (form) form.reset();
+            window.removeImage();
+            currentlyEditingId = null;
+            const title = document.getElementById('modalTitle');
+            if (title) title.textContent = "New Repair Job";
+        }
+    }
+};
+
+window.handleImageUpload = function(input) {
     const file = input.files[0];
     if (file) {
         const reader = new FileReader();
         reader.onload = function(e) {
             currentImageData = e.target.result;
-            const preview = document.getElementById('imagePreview');
-            document.getElementById('previewImg').src = currentImageData;
-            preview.classList.remove('hidden');
+            const previewImg = document.getElementById('previewImg');
+            const previewDiv = document.getElementById('imagePreview');
+            if (previewImg) previewImg.src = currentImageData;
+            if (previewDiv) previewDiv.classList.remove('hidden');
         };
         reader.readAsDataURL(file);
     }
-}
+};
 
-function removeImage() {
+window.removeImage = function() {
     currentImageData = null;
-    document.getElementById('imagePreview').classList.add('hidden');
-    document.getElementById('photoGallery').value = '';
-    document.getElementById('photoCamera').value = '';
-}
+    const previewDiv = document.getElementById('imagePreview');
+    if (previewDiv) previewDiv.classList.add('hidden');
+    const gallery = document.getElementById('photoGallery');
+    const camera = document.getElementById('photoCamera');
+    if (gallery) gallery.value = '';
+    if (camera) camera.value = '';
+};
 
-function viewImage(src) {
+window.viewImage = function(src) {
     const modal = document.getElementById('viewImageModal');
-    document.getElementById('fullSizeImage').src = src;
-    modal.classList.remove('hidden');
-}
+    const fullImg = document.getElementById('fullSizeImage');
+    if (fullImg) fullImg.src = src;
+    if (modal) modal.classList.remove('hidden');
+};
 
-// DATA CORE
-function loadData() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    repairs = saved ? JSON.parse(saved) : [];
-}
-
-function saveData() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(repairs));
-}
-
-function toggleModal(id) {
-    const modal = document.getElementById(id);
-    if (modal) {
-        modal.classList.toggle('hidden');
-        // Reset form if closing
-        if (modal.classList.contains('hidden')) {
-            document.getElementById('repairForm').reset();
-            removeImage();
-            currentlyEditingId = null;
-            document.getElementById('modalTitle').textContent = "New Repair Job";
-        }
+window.updateStatus = async function(id) {
+    const r = repairs.find(x => x.id === id);
+    if(r && r.firebaseDocId) {
+        const flow = ['pending', 'repairing', 'completed', 'cancelled'];
+        const nextStatus = flow[(flow.indexOf(r.status) + 1) % flow.length];
+        await updateDoc(doc(db, "repairs", r.firebaseDocId), { status: nextStatus });
     }
-}
+};
 
-// EDIT FUNCTION
-function editRepair(id) {
+window.editRepair = function(id) {
     const r = repairs.find(x => x.id === id);
     if (!r) return;
-
     currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
-    
-    // Fill the form with existing data
     document.getElementById('customerName').value = r.customer;
     document.getElementById('customerPhone').value = r.phone || '';
     document.getElementById('deviceModel').value = r.device;
@@ -72,20 +143,49 @@ function editRepair(id) {
     document.getElementById('issueType').value = r.issue;
     document.getElementById('cost').value = r.cost;
     document.getElementById('paid').value = r.paid;
-    
     if (r.image) {
         currentImageData = r.image;
-        document.getElementById('previewImg').src = r.image;
-        document.getElementById('imagePreview').classList.remove('hidden');
+        const previewImg = document.getElementById('previewImg');
+        const previewDiv = document.getElementById('imagePreview');
+        if (previewImg) previewImg.src = r.image;
+        if (previewDiv) previewDiv.classList.remove('hidden');
     }
+    window.toggleModal('entryModal');
+};
 
-    toggleModal('entryModal');
-}
+window.deleteRepair = async function(id) {
+    if(confirm("Permanently delete this entry from cloud?")) {
+        const repair = repairs.find(r => r.id === id);
+        if (repair?.firebaseDocId) {
+            await deleteDoc(doc(db, "repairs", repair.firebaseDocId));
+        }
+    }
+};
 
+window.filterTable = function() {
+    const query = document.getElementById('searchInput')?.value.toLowerCase().trim() || "";
+    const filterVal = document.getElementById('statusFilter')?.value || "all";
+    
+    let data = repairs.filter(r => {
+        const matchesTab = (currentTab === 'all') || 
+                           (currentTab === 'pending' && r.status !== 'completed') || 
+                           (currentTab === 'fixed' && r.status === 'completed');
+        const matchesSearch = r.customer.toLowerCase().includes(query) || r.device.toLowerCase().includes(query);
+        const matchesStatus = (filterVal === 'all') || (r.status === filterVal);
+        return matchesTab && matchesSearch && matchesStatus;
+    });
+
+    renderTable(data);
+};
+
+// --- 6. RENDERING LOGIC ---
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
+    const noData = document.getElementById('noDataMessage');
+    if (!tbody) return;
+
     tbody.innerHTML = '';
-    document.getElementById('noDataMessage').classList.toggle('hidden', data.length > 0);
+    if (noData) noData.classList.toggle('hidden', data.length > 0);
 
     data.forEach(repair => {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
@@ -106,7 +206,7 @@ function renderTable(data = repairs) {
                 ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
             </td>
             <td class="px-6 py-6">
-                <button onclick="updateStatus('${repair.id}')" class="status-pill status-${repair.status}">${repair.status}</button>
+                <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status}</button>
             </td>
             <td class="px-6 py-6">
                 <div class="text-xs font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
@@ -121,156 +221,99 @@ function renderTable(data = repairs) {
     updateStats();
 }
 
-
-function deleteRepair(id) {
-    if(confirm("Are you sure you want to delete this entry?")) {
-        repairs = repairs.filter(r => r.id !== id);
-        saveData();
-        filterTable();
-        showToast("Entry Deleted");
-    }
-}
-
-function updateStatus(id) {
-    const flow = ['pending', 'repairing', 'completed', 'cancelled'];
-    const r = repairs.find(x => x.id === id);
-    if(r) {
-        r.status = flow[(flow.indexOf(r.status) + 1) % flow.length];
-        saveData(); filterTable();
-    }
-}
-
 function updateStats() {
-    const pendingCount = repairs.filter(r => r.status === 'pending' || r.status === 'repairing').length;
-    const fixedCount = repairs.filter(r => r.status === 'completed').length;
+    const pending = repairs.filter(r => r.status === 'pending' || r.status === 'repairing').length;
+    const fixed = repairs.filter(r => r.status === 'completed').length;
     const revenue = repairs.reduce((a, c) => a + (Number(c.paid) || 0), 0);
     const credit = repairs.reduce((a, c) => a + Math.max(0, (Number(c.cost) || 0) - (Number(c.paid) || 0)), 0);
 
-    document.getElementById('stat-total').textContent = repairs.length;
-    document.getElementById('stat-active').textContent = pendingCount;
-    document.getElementById('stat-fixed-count').textContent = fixedCount;
-    document.getElementById('stat-revenue').textContent = `रू${revenue.toLocaleString()}`;
-    document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
-}// --- TAB SWITCHING LOGIC ---
-function setTab(tab) {
-    // 1. Update the global variable so filterTable() knows which tab is active
-    currentTab = tab;
-    
-    // 2. Update the UI: Remove active styling from all cards
-    document.querySelectorAll('.stat-card').forEach(card => {
-        card.classList.remove('active-tab');
-    });
-    
-    // 3. Add active styling to the card that was just clicked
-    const selectedVisual = document.getElementById(`card-${tab}`);
-    if (selectedVisual) {
-        selectedVisual.classList.add('active-tab');
-    }
-
-    // 4. Run the filter to refresh the table rows
-    filterTable();
+    if(document.getElementById('stat-total')) document.getElementById('stat-total').textContent = repairs.length;
+    if(document.getElementById('stat-active')) document.getElementById('stat-active').textContent = pending;
+    if(document.getElementById('stat-fixed-count')) document.getElementById('stat-fixed-count').textContent = fixed;
+    if(document.getElementById('stat-revenue')) document.getElementById('stat-revenue').textContent = `रू${revenue.toLocaleString()}`;
+    if(document.getElementById('stat-credit')) document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
 }
-
-
-function filterTable() {
-    const query = document.getElementById('searchInput').value.trim();
-    
-    // 1. If search is empty, just show the normal tab filtering
-    if (!query) {
-        const tabFiltered = repairs.filter(r => {
-            if (currentTab === 'all') return true;
-            if (currentTab === 'pending') return r.status !== 'completed';
-            if (currentTab === 'fixed') return r.status === 'completed';
-            return true;
-        });
-        renderTable(tabFiltered);
-        return;
-    }
-
-    // 2. Configure the "Smart Search"
-    const options = {
-        keys: ['customer', 'device', 'issue', 'sn', 'id'], // What fields to search
-        threshold: 0.3, // 0.0 = perfect match, 1.0 = match anything. 0.3 is the "sweet spot" for typos.
-        distance: 100,
-        ignoreLocation: true
-    };
-
-    const fuse = new Fuse(repairs, options);
-    const results = fuse.search(query);
-
-    // 3. Extract the items and apply the current Tab filter
-    const searchMatches = results.map(result => result.item);
-    
-    const finalFiltered = searchMatches.filter(r => {
-        if (currentTab === 'all') return true;
-        if (currentTab === 'pending') return r.status !== 'completed';
-        if (currentTab === 'fixed') return r.status === 'completed';
-        return true;
-    });
-
-    renderTable(finalFiltered);
-}
-
-
 
 function showToast(msg) {
     const toast = document.getElementById('toast');
-    document.getElementById('toastMessage').textContent = msg;
-    toast.classList.remove('translate-y-20', 'opacity-0');
-    setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+    const toastMsg = document.getElementById('toastMessage');
+    if(toast && toastMsg) {
+        toastMsg.textContent = msg;
+        toast.classList.remove('translate-y-20', 'opacity-0');
+        setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+    }
 }
 
-document.getElementById('repairForm').onsubmit = function(e) {
-    e.preventDefault();
-    
-    const formData = {
-        customer: document.getElementById('customerName').value,
-        phone: document.getElementById('customerPhone').value,
-        device: document.getElementById('deviceModel').value,
-        sn: document.getElementById('snNumber').value,
-        issue: document.getElementById('issueType').value,
-        cost: Number(document.getElementById('cost').value) || 0,
-        paid: Number(document.getElementById('paid').value) || 0,
-        image: currentImageData 
-    };
-
-    if (currentlyEditingId) {
-        const index = repairs.findIndex(r => r.id === currentlyEditingId);
-        // Keep the original date when editing
-        repairs[index] = { ...repairs[index], ...formData };
-        showToast("Entry Updated");
-    } else {
-        const now = new Date();
-        let finalDate = "";
-
-        // Safety check for NepaliDate library
-        try {
-            if (typeof NepaliDate !== 'undefined') {
-                const nDate = new window.NepaliDate(now);
-                const nepaliDate = nDate.format('YYYY/MM/DD');
-                const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-                finalDate = `${nepaliDate} | ${time}`;
-            } else {
-                finalDate = now.toLocaleDateString(); // Fallback to AD if library fails
+// --- 7. STARTUP & FORM SUBMIT ---
+window.onload = () => {
+    // Login Logic
+    const loginBtn = document.getElementById('loginBtn');
+    if (loginBtn) {
+        loginBtn.onclick = async () => {
+            const email = document.getElementById('loginEmail').value;
+            const pass = document.getElementById('loginPass').value;
+            try {
+                loginBtn.textContent = "Verifying...";
+                await signInWithEmailAndPassword(auth, email, pass);
+            } catch (err) {
+                loginBtn.textContent = "Access Dashboard";
+                alert("Invalid Credentials");
             }
-        } catch (err) {
-            finalDate = now.toLocaleDateString();
-        }
-
-        const newEntry = {
-            id: Math.floor(1000 + Math.random() * 9000).toString(),
-            ...formData,
-            status: 'pending',
-            date: finalDate
         };
-
-        repairs.unshift(newEntry);
-        showToast("New Job Logged");
     }
+    
 
-    saveData();
-    toggleModal('entryModal');
-    filterTable();
+    // Save Logic
+    const repairForm = document.getElementById('repairForm');
+    if (repairForm) {
+        repairForm.onsubmit = async function(e) {
+            e.preventDefault();
+            showToast("Syncing...");
+
+            let finalImageUrl = currentImageData;
+            console.log("Current User:", auth.currentUser);
+            try {
+                // ImgBB Upload
+                if (currentImageData && currentImageData.startsWith('data:image')) {
+                    const imgFormData = new FormData();
+                    imgFormData.append("image", currentImageData.split(',')[1]);
+                    const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, { method: "POST", body: imgFormData });
+                    const result = await res.json();
+                    if (result.success) finalImageUrl = result.data.url;
+                }
+
+                const formData = {
+                    customer: document.getElementById('customerName').value,
+                    phone: document.getElementById('customerPhone').value,
+                    device: document.getElementById('deviceModel').value,
+                    sn: document.getElementById('snNumber').value,
+                    issue: document.getElementById('issueType').value,
+                    cost: Number(document.getElementById('cost').value) || 0,
+                    paid: Number(document.getElementById('paid').value) || 0,
+                    image: finalImageUrl,
+                    updatedAt: new Date().toISOString()
+                };
+
+                if (currentlyEditingId) {
+                    const r = repairs.find(x => x.id === currentlyEditingId);
+                    await updateDoc(doc(db, "repairs", r.firebaseDocId), formData);
+                } else {
+                    const now = new Date();
+                    let finalDate = now.toLocaleDateString();
+                    if (typeof window.NepaliDate === 'function') {
+                        finalDate = new window.NepaliDate(now).format('YYYY/MM/DD');
+                    }
+                    const newEntry = {
+                        id: Math.floor(1000 + Math.random() * 9000).toString(),
+                        ...formData,
+                        status: 'pending',
+                        date: finalDate,
+                        createdAt: now.toISOString()
+                    };
+                    await addDoc(collection(db, "repairs"), newEntry);
+                }
+                window.toggleModal('entryModal');
+            } catch (err) { alert("Error: " + err.message); }
+        };
+    }
 };
-
-window.onload = () => { loadData(); renderTable(); };
