@@ -163,20 +163,39 @@ window.deleteRepair = async function(id) {
 };
 
 window.filterTable = function() {
-    const query = document.getElementById('searchInput')?.value.toLowerCase().trim() || "";
+ const query = document.getElementById('searchInput')?.value.trim() || "";
     const filterVal = document.getElementById('statusFilter')?.value || "all";
-    
-    let data = repairs.filter(r => {
+
+    // 🔥 CREATE FUSE INSTANCE HERE
+    const fuse = new Fuse(repairs, {
+    keys: [
+        { name: 'customer', weight: 2 },
+        { name: 'device', weight: 1.5 },
+        { name: 'issue', weight: 1 }
+    ],
+    threshold: 0.3,
+    ignorelocation: true
+});
+
+    // 🔥 SMART SEARCH
+    let searchResults = query
+        ? fuse.search(query).map(res => res.item)
+        : repairs;
+
+    // 🔥 FILTER AFTER SEARCH
+    let data = searchResults.filter(r => {
         const matchesTab = (currentTab === 'all') || 
-                           (currentTab === 'pending' && r.status !== 'completed') || 
-                           (currentTab === 'fixed' && r.status === 'completed');
-        const matchesSearch = r.customer.toLowerCase().includes(query) || r.device.toLowerCase().includes(query);
+            (currentTab === 'pending' && r.status !== 'completed') || 
+            (currentTab === 'fixed' && r.status === 'completed');
+
         const matchesStatus = (filterVal === 'all') || (r.status === filterVal);
-        return matchesTab && matchesSearch && matchesStatus;
+
+        return matchesTab && matchesStatus;
     });
 
     renderTable(data);
 };
+
 
 // --- 6. RENDERING LOGIC ---
 function renderTable(data = repairs) {
@@ -298,20 +317,31 @@ window.onload = () => {
                     const r = repairs.find(x => x.id === currentlyEditingId);
                     await updateDoc(doc(db, "repairs", r.firebaseDocId), formData);
                 } else {
-                    const now = new Date();
-                    let finalDate = now.toLocaleDateString();
-                    if (typeof window.NepaliDate === 'function') {
-                        finalDate = new window.NepaliDate(now).format('YYYY/MM/DD');
-                    }
-                    const newEntry = {
-                        id: Math.floor(1000 + Math.random() * 9000).toString(),
-                        ...formData,
-                        status: 'pending',
-                        date: finalDate,
-                        createdAt: now.toISOString()
-                    };
-                    await addDoc(collection(db, "repairs"), newEntry);
-                }
+    const now = new Date();
+
+    let finalDate = now.toLocaleDateString();
+
+    try {
+        if (window.NepaliDate) {
+            const nepDate = new NepaliDate(now);
+            finalDate = nepDate.format
+                ? nepDate.format('YYYY/MM/DD')
+                : nepDate.toString();
+        }
+    } catch (e) {
+        console.log("Nepali conversion failed:", e);
+    }
+
+    const newEntry = {
+        id: Math.floor(1000 + Math.random() * 9000).toString(),
+        ...formData,
+        status: 'pending',
+        date: finalDate,
+        createdAt: now.toISOString()
+    };
+
+    await addDoc(collection(db, "repairs"), newEntry);
+}
                 window.toggleModal('entryModal');
             } catch (err) { alert("Error: " + err.message); }
         };
