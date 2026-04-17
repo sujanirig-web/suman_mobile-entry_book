@@ -213,17 +213,20 @@ function renderTable(data = repairs) {
         tr.className = "table-row-hover group border-b border-slate-50";
         tr.innerHTML = `
             <td class="px-8 py-6">
-                <div class="text-xs font-bold text-slate-400">#${repair.id}</div>
-                <div class="text-[10px] font-bold text-green-600 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
-                <div class="text-[9px] font-bold text-slate-400 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
+                <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
+                <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
+                <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
+                 
             </td>
-            <td class="px-6 py-6">
+            <td class="px-7 py-7">
                 <div class="font-bold text-slate-800 text-sm">${repair.customer}</div>
-                <div class="font-bold text-green-600 text-[10px] uppercase">${repair.device}</div>
+                <div class="font-bold text-green-600 text-[16px] uppercase">${repair.device}</div>
+                 ${repair.password ? `<div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password}</div>` : ''}
             </td>
             <td class="px-6 py-6">
                 <div class="text-xs font-bold text-slate-600">${repair.issue}</div>
                 ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
+             
             </td>
             <td class="px-6 py-6">
                 <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status}</button>
@@ -317,6 +320,8 @@ window.onload = () => {
                     device: document.getElementById('deviceModel').value,
                     sn: document.getElementById('snNumber').value,
                     issue: document.getElementById('issueType').value,
+                    password: document.getElementById('devicePassword').value,
+
                     cost: Number(document.getElementById('cost').value) || 0,
                     paid: Number(document.getElementById('paid').value) || 0,
                     image: finalImageUrl,
