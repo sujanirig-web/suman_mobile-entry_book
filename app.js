@@ -170,6 +170,7 @@ window.filterTable = function() {
     const fuse = new Fuse(repairs, {
     keys: [
         { name: 'customer', weight: 2 },
+        { name: 'sn', weight:1.8 },
         { name: 'device', weight: 1.5 },
         { name: 'issue', weight: 1 },
         { name: 'date',  weight: 1}
