@@ -171,7 +171,8 @@ window.filterTable = function() {
     keys: [
         { name: 'customer', weight: 2 },
         { name: 'device', weight: 1.5 },
-        { name: 'issue', weight: 1 }
+        { name: 'issue', weight: 1 },
+        { name: 'date',  weight: 1}
     ],
     threshold: 0.3,
     ignorelocation: true
