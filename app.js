@@ -1,6 +1,6 @@
 // --- 1. FIREBASE IMPORTS ---
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -40,19 +40,21 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-
-// --- 4. DATA CORE (FIREBASE SYNC) ---
 function loadData() {
-    const repairsCol = collection(db, "repairs");
-    onSnapshot(repairsCol, (snapshot) => {
-        repairs = snapshot.docs.map(doc => ({
-            ...doc.data(),
-            firebaseDocId: doc.id
-        }));
-        repairs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        window.filterTable();
-    });
+    const repairsCol = query(
+        collection(db, "repairs"),
+        orderBy("createdAt", "desc"),
+        limit(100) // 👈 LIMIT DATA
+    );
 
+   onSnapshot(repairsCol, (snapshot) => {
+    repairs = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id 
+    }));
+
+    window.filterTable();
+});
 }
 function setTab(tab) {
     currentTab = tab;
@@ -124,10 +126,10 @@ window.viewImage = function(src) {
 
 window.updateStatus = async function(id) {
     const r = repairs.find(x => x.id === id);
-    if(r && r.firebaseDocId) {
+    if(r && r.id) {
         const flow = ['pending', 'repairing', 'completed', 'cancelled'];
         const nextStatus = flow[(flow.indexOf(r.status) + 1) % flow.length];
-        await updateDoc(doc(db, "repairs", r.firebaseDocId), { status: nextStatus });
+        await updateDoc(doc(db, "repairs", r.id), { status: nextStatus });
     }
 };
 
@@ -144,9 +146,10 @@ window.editRepair = function(id) {
     document.getElementById('cost').value = r.cost;
     document.getElementById('paid').value = r.paid;
     if (r.image) {
-        currentImageData = r.image;
+        currentImageData = r.image || null;
         const previewImg = document.getElementById('previewImg');
         const previewDiv = document.getElementById('imagePreview');
+        
         if (previewImg) previewImg.src = r.image;
         if (previewDiv) previewDiv.classList.remove('hidden');
     }
@@ -156,33 +159,73 @@ window.editRepair = function(id) {
 window.deleteRepair = async function(id) {
     if(confirm("Permanently delete this entry from cloud?")) {
         const repair = repairs.find(r => r.id === id);
-        if (repair?.firebaseDocId) {
-            await deleteDoc(doc(db, "repairs", repair.firebaseDocId));
+        if (repair?.id) {
+            await deleteDoc(doc(db, "repairs", repair.id));
         }
     }
 };
 
 window.filterTable = function() {
- const query = document.getElementById('searchInput')?.value.trim() || "";
+    const query = document.getElementById('searchInput')?.value.trim() || "";
     const filterVal = document.getElementById('statusFilter')?.value || "all";
 
-    // 🔥 CREATE FUSE INSTANCE HERE
-    const fuse = new Fuse(repairs, {
-    keys: [
-        { name: 'customer', weight: 2 },
-        { name: 'sn', weight:1.8 },
-        { name: 'device', weight: 1.5 },
-        { name: 'issue', weight: 1 },
-        { name: 'date',  weight: 1}
-    ],
-    threshold: 0.3,
-    ignorelocation: true
-});
+    let searchResults = repairs;
 
-    // 🔥 SMART SEARCH
-    let searchResults = query
-        ? fuse.search(query).map(res => res.item)
-        : repairs;
+    if (query) {
+        const cleanedQuery = query.toLowerCase().trim();
+        const tokens = cleanedQuery.split(/\s+/); // multi-word
+
+        const fuse = new Fuse(repairs, {
+            keys: [
+                { name: 'customer', weight: 3 },
+                { name: 'phone', weight: 2.5 },
+                { name: 'sn', weight: 2 },
+                { name: 'device', weight: 1.5 },
+                { name: 'issue', weight: 1.2 },
+                { name: 'date', weight: 0.8 }
+            ],
+            threshold: 0.35,
+            ignoreLocation: true,
+            includeScore: true
+        });
+
+        // 🔥 FUZZY SEARCH
+        let fuzzy = fuse.search(cleanedQuery);
+
+        // 🔥 TOKEN MATCH (VERY SMART)
+        let exact = repairs.filter(r => {
+            const combined = `
+                ${r.customer || ''} 
+                ${r.phone || ''} 
+                ${r.sn || ''} 
+                ${r.device || ''} 
+                ${r.issue || ''}
+            `.toLowerCase();
+
+            return tokens.every(t => combined.includes(t));
+        });
+
+        // 🔥 PHONE PRIORITY BOOST
+        let phoneBoost = repairs.filter(r =>
+            r.phone && cleanedQuery.length >= 4 && r.phone.includes(cleanedQuery)
+        );
+
+        // 🔥 SORT FUZZY
+        fuzzy.sort((a, b) => a.score - b.score);
+        fuzzy = fuzzy.map(r => r.item);
+
+        // 🔥 MERGE (PRIORITY ORDER)
+        searchResults = [
+            ...phoneBoost,
+            ...exact,
+            ...fuzzy
+        ];
+
+        // 🔥 REMOVE DUPLICATES
+        searchResults = Array.from(
+            new Map(searchResults.map(i => [i.id, i])).values()
+        );
+    }
 
     // 🔥 FILTER AFTER SEARCH
     let data = searchResults.filter(r => {
@@ -197,7 +240,6 @@ window.filterTable = function() {
 
     renderTable(data);
 };
-
 
 // --- 6. RENDERING LOGIC ---
 function renderTable(data = repairs) {
@@ -331,7 +373,7 @@ window.onload = () => {
 
                 if (currentlyEditingId) {
                     const r = repairs.find(x => x.id === currentlyEditingId);
-                    await updateDoc(doc(db, "repairs", r.firebaseDocId), formData);
+                    await updateDoc(doc(db, "repairs", r.id), formData);
                 } else {
     const now = new Date();
 
@@ -349,11 +391,10 @@ window.onload = () => {
     }
 
     const newEntry = {
-        id: Math.floor(1000 + Math.random() * 9000).toString(),
         ...formData,
         status: 'pending',
         date: finalDate,
-        createdAt: now.toISOString()
+        createdAt: new Date()
     };
 
     await addDoc(collection(db, "repairs"), newEntry);
