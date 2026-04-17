@@ -227,8 +227,17 @@ function renderTable(data = repairs) {
             <td class="px-6 py-6">
                 <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status}</button>
             </td>
-            <td class="px-6 py-6">
-                <div class="text-xs font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
+           <td class="px-6 py-6">
+    <div class="text-[11px] font-bold text-slate-700">
+        Total: रू${(Number(repair.cost) || 0).toLocaleString()}
+    </div>
+    <div class="text-[11px] font-bold text-emerald-600">
+        Paid: रू${(Number(repair.paid) || 0).toLocaleString()}
+    </div>
+    <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">
+        Due: रू${due.toLocaleString()}
+    </div>
+</td>
             </td>
             <td class="px-8 py-6 text-right space-x-3">
                 <button onclick="editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
