@@ -265,7 +265,7 @@ function renderTable(data = repairs) {
             <td class="px-7 py-7">
                 <div class="font-bold text-slate-800 text-sm">${repair.customer}</div>
                 <div class="font-bold text-green-600 text-[16px] uppercase">${repair.device}</div>
-                 ${repair.password ? `<div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password}</div>` : ''}
+                  <div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password}</div>
             </td>
             <td class="px-6 py-6">
                 <div class="text-xs font-bold text-slate-600">${repair.issue}</div>
@@ -357,6 +357,7 @@ window.onload = () => {
                     const result = await res.json();
                     if (result.success) finalImageUrl = result.data.url;
                 }
+        const passwordInput = document.getElementById('devicePassword').value;        
 
                 const formData = {
                     customer: document.getElementById('customerName').value,
@@ -364,13 +365,18 @@ window.onload = () => {
                     device: document.getElementById('deviceModel').value,
                     sn: document.getElementById('snNumber').value,
                     issue: document.getElementById('issueType').value,
-                    password: document.getElementById('devicePassword').value,
+                  
 
                     cost: Number(document.getElementById('cost').value) || 0,
                     paid: Number(document.getElementById('paid').value) || 0,
                     image: finalImageUrl,
                     updatedAt: new Date().toISOString()
                 };
+                // 👇 only attach password if user typed something
+if (passwordInput.trim() !== "") {
+    formData.password = passwordInput;
+}
+
 
                 if (currentlyEditingId) {
                     const r = repairs.find(x => x.id === currentlyEditingId);
