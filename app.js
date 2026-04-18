@@ -259,6 +259,7 @@ function renderTable(data = repairs) {
                 <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
                 <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
                 <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
+                 <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.phone || ''}</div>
                  
             </td>
             <td class="px-7 py-7">
