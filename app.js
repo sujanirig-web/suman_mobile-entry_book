@@ -380,12 +380,17 @@ if (passwordInput.trim() !== "") {
 if (currentlyEditingId) {
     const r = repairs.find(x => x.id === currentlyEditingId);
 
-    const isCompleted = formData.paid >= formData.cost;
+    const newPaid = formData.paid;
+    const newCost = formData.cost;
+
+    // ✅ only completed if cost > 0 AND fully paid
+    const isCompleted = newCost > 0 && newPaid >= newCost;
 
     await updateDoc(doc(db, "repairs", r.id), {
         ...formData,
-        status: isCompleted ? 'completed' : r.status
+        status: isCompleted ? 'completed' : 'pending' // 👈 force correct state
     });
+
 
                 } else {
     const now = new Date();
@@ -403,8 +408,7 @@ if (currentlyEditingId) {
         console.log("Nepali conversion failed:", e);
     }
 
-    const isCompleted = formData.paid >= formData.cost;
-
+   const isCompleted = formData.cost > 0 && formData.paid >= formData.cost;
 const newEntry = {
     ...formData,
     status: isCompleted ? 'completed' : 'pending',
