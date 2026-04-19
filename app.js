@@ -377,10 +377,16 @@ if (passwordInput.trim() !== "") {
     formData.password = passwordInput;
 }
 
+if (currentlyEditingId) {
+    const r = repairs.find(x => x.id === currentlyEditingId);
 
-                if (currentlyEditingId) {
-                    const r = repairs.find(x => x.id === currentlyEditingId);
-                    await updateDoc(doc(db, "repairs", r.id), formData);
+    const isCompleted = formData.paid >= formData.cost;
+
+    await updateDoc(doc(db, "repairs", r.id), {
+        ...formData,
+        status: isCompleted ? 'completed' : r.status
+    });
+
                 } else {
     const now = new Date();
 
@@ -397,13 +403,14 @@ if (passwordInput.trim() !== "") {
         console.log("Nepali conversion failed:", e);
     }
 
-    const newEntry = {
-        ...formData,
-        status: 'pending',
-        date: finalDate,
-        createdAt: new Date()
-    };
+    const isCompleted = formData.paid >= formData.cost;
 
+const newEntry = {
+    ...formData,
+    status: isCompleted ? 'completed' : 'pending',
+    date: finalDate,
+    createdAt: new Date()
+};
     await addDoc(collection(db, "repairs"), newEntry);
 }
                 window.toggleModal('entryModal');
