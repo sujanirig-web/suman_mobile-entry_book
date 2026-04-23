@@ -1,8 +1,10 @@
 // --- 1. FIREBASE IMPORTS ---
+// Change 'algoliasearch-lite' to 'algoliasearch'
+import algoliasearch from 'https://cdn.jsdelivr.net/npm/algoliasearch@4.22.1/dist/algoliasearch.esm.browser.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-
+import { getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 const firebaseConfig = {
     apiKey: "AIzaSyDFEwq_evYAot2DEtErBO58u6ABWBjVZ5M",
     authDomain: "relife-entry-book.firebaseapp.com",
@@ -15,11 +17,18 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth();
+const algoliaClient = algoliasearch(
+    "SRL627FPXS",
+    "a794f93efc346a4a17d20fcebff54ad6" // temporary (fine for now)
+);
+
+const algoliaIndex = algoliaClient.initIndex("repairs");
 
 
 // --- 2. GLOBAL STATE ---
 let repairs = [];
 let currentTab = 'all';
+let currentDate = new Date();
 let currentImageData = null;
 let currentlyEditingId = null;
 
@@ -31,7 +40,7 @@ onAuthStateChanged(auth, (user) => {
     if (overlay) {
         if (user) {
             overlay.style.display = 'none';
-            loadData(); 
+            loadDataByDay(); 
         } else {
             overlay.style.display = 'flex';
             repairs = [];
@@ -40,54 +49,141 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-function loadData() {
-    const repairsCol = query(
+function getDayRange(date) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+}
+let unsubscribe = null;
+
+function loadDataByDay() {
+    if (unsubscribe) unsubscribe();
+
+    const q = query(
         collection(db, "repairs"),
-        orderBy("createdAt", "desc"),
-        limit(100) // 👈 LIMIT DATA
+        orderBy("createdAt", "desc")
     );
 
-   onSnapshot(repairsCol, (snapshot) => {
-    repairs = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id 
-    }));
+    unsubscribe = onSnapshot(q, (snapshot) => {
+        const allData = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            id: doc.id
+        }));
 
-    window.filterTable();
-});
+        const { start, end } = getDayRange(currentDate);
+
+        repairs = allData.filter(r => {
+            if (!r.createdAt) return true; // 👈 show old/broken entries
+
+            let d;
+
+            // ✅ handle string
+            if (typeof r.createdAt === "string") {
+                d = new Date(r.createdAt);
+            }
+            // ✅ handle Firestore timestamp
+            else if (r.createdAt.seconds) {
+                d = new Date(r.createdAt.seconds * 1000);
+            }
+            else {
+                return true; // 👈 fallback: show it
+            }
+
+            // ❌ invalid date → still show it
+            if (isNaN(d)) return true;
+
+            return d >= start && d <= end;
+        });
+
+        console.log("FILTERED:", repairs);
+
+        updateDateLabel();
+        window.filterTable();
+    });
 }
+
+// Label update
+function updateDateLabel() {
+    const label = document.getElementById('dateLabel');
+
+    if (!label) return;
+
+    try {
+        if (window.NepaliDate) {
+            const nepDate = new NepaliDate(currentDate);
+
+            label.textContent = nepDate.format
+                ? nepDate.format('YYYY/MM/DD')
+                : nepDate.toString();
+        } else {
+            label.textContent = currentDate.toLocaleDateString();
+        }
+    } catch (e) {
+        console.log("BS conversion error:", e);
+        label.textContent = currentDate.toLocaleDateString();
+    }
+}
+
+// 👇 make it visible to HTMl
 function setTab(tab) {
     currentTab = tab;
 
-    document.querySelectorAll('.stat-card').forEach(card => {
-        card.classList.remove('active-tab', 'ring-2', 'ring-green-600');
-    });
-
-    const activeCard = document.getElementById(`card-${tab}`);
-    if (activeCard) {
-        activeCard.classList.add('active-tab', 'ring-2', 'ring-green-600');
-    }
+    // update UI active card (optional but good)
+    document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
+    const active = document.getElementById(`card-${tab}`);
+    if (active) active.classList.add('active-tab');
 
     window.filterTable();
 }
-
-// 👇 make it visible to HTML
 window.setTab = setTab;
+window.nextDay = function () {
+    currentDate.setDate(currentDate.getDate() + 1);
+    loadDataByDay();
+};
+
+window.prevDay = function () {
+    currentDate.setDate(currentDate.getDate() - 1);
+    loadDataByDay();
+};
+
+window.goToday = function () {
+    currentDate = new Date();
+    loadDataByDay();
+};
 
 
 // --- 5. EXPORTING ALL FUNCTIONS TO WINDOW (Fixes "Not Defined" Errors) ---
 
 window.toggleModal = function(id) {
+    console.log("Opening Modal:", id); 
     const modal = document.getElementById(id);
-    if (modal) {
-        modal.classList.toggle('hidden');
-        if (modal.classList.contains('hidden')) {
+    if (!modal) {
+        console.error("Could not find modal with ID:", id);
+        return;
+    }
+
+    const isOpening = modal.classList.contains('hidden');
+    
+    if (isOpening) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex'); // Add this to ensure centering works
+        document.body.style.overflow = 'hidden';
+    } else {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        document.body.style.overflow = 'auto';
+
+        // Reset form only when closing the entry modal
+        if (id === 'entryModal') {
             const form = document.getElementById('repairForm');
             if (form) form.reset();
             window.removeImage();
             currentlyEditingId = null;
-            const title = document.getElementById('modalTitle');
-            if (title) title.textContent = "New Repair Job";
+            document.getElementById('modalTitle').textContent = "New Repair Job";
         }
     }
 };
@@ -125,13 +221,26 @@ window.viewImage = function(src) {
 };
 
 window.updateStatus = async function(id) {
+    // Find repair in local state OR the ID passed directly
     const r = repairs.find(x => x.id === id);
-    if(r && r.id) {
+    const docId = r ? (r.id || r.objectID) : id;
+    
+    if(docId) {
         const flow = ['pending', 'repairing', 'completed', 'cancelled'];
-        const nextStatus = flow[(flow.indexOf(r.status) + 1) % flow.length];
-        await updateDoc(doc(db, "repairs", r.id), { status: nextStatus });
+        // Use a fallback status if r isn't found in current local day view
+        const currentStatus = r ? r.status : 'pending';
+        const nextStatus = flow[(flow.indexOf(currentStatus) + 1) % flow.length];
+        
+        await updateDoc(doc(db, "repairs", docId), { status: nextStatus });
+        
+        // 🔥 CRITICAL: Update Algolia too so search stays in sync
+        await algoliaIndex.partialUpdateObject({
+            objectID: docId,
+            status: nextStatus
+        });
     }
 };
+
 
 window.editRepair = function(id) {
     const r = repairs.find(x => x.id === id);
@@ -157,87 +266,89 @@ window.editRepair = function(id) {
 };
 
 window.deleteRepair = async function(id) {
-    if(confirm("Permanently delete this entry from cloud?")) {
-        const repair = repairs.find(r => r.id === id);
-        if (repair?.id) {
-            await deleteDoc(doc(db, "repairs", repair.id));
+    if(confirm("Permanently delete this entry?")) {
+        const r = repairs.find(x => x.id === id || x.objectID === id);
+        const docId = r?.objectID || r?.id || id;
+
+        if (docId) {
+            await deleteDoc(doc(db, "repairs", docId));
+            await algoliaIndex.deleteObject(docId);
         }
     }
 };
 
-window.filterTable = function() {
-    const query = document.getElementById('searchInput')?.value.trim() || "";
+window.filterTable = async function () {
+    const rawQuery = document.getElementById('searchInput')?.value.trim() || "";
+    const queryText = rawQuery.toLowerCase();
+    const isSearching = rawQuery.length >= 2;
     const filterVal = document.getElementById('statusFilter')?.value || "all";
 
-    let searchResults = repairs;
+    let searchResults = [...repairs];
 
-    if (query) {
-        const cleanedQuery = query.toLowerCase().trim();
-        const tokens = cleanedQuery.split(/\s+/); // multi-word
+    // =========================
+    // 🔥 ALGOLIA SEARCH
+    // =========================
+    if (isSearching) {
+        try {
+            const res = await algoliaIndex.search(rawQuery, {
+                hitsPerPage: 200
+            });
 
-        const fuse = new Fuse(repairs, {
-            keys: [
-                { name: 'customer', weight: 3 },
-                { name: 'phone', weight: 2.5 },
-                { name: 'sn', weight: 2 },
-                { name: 'device', weight: 1.5 },
-                { name: 'issue', weight: 1.2 },
-                { name: 'date', weight: 0.8 }
-            ],
-            threshold: 0.35,
-            ignoreLocation: true,
-            includeScore: true
-        });
+            searchResults = res.hits.map(hit => ({
+                ...hit,
+                id: hit.objectID
+            }));
 
-        // 🔥 FUZZY SEARCH
-        let fuzzy = fuse.search(cleanedQuery);
-
-        // 🔥 TOKEN MATCH (VERY SMART)
-        let exact = repairs.filter(r => {
-            const combined = `
-                ${r.customer || ''} 
-                ${r.phone || ''} 
-                ${r.sn || ''} 
-                ${r.device || ''} 
-                ${r.issue || ''}
-            `.toLowerCase();
-
-            return tokens.every(t => combined.includes(t));
-        });
-
-        // 🔥 PHONE PRIORITY BOOST
-        let phoneBoost = repairs.filter(r =>
-            r.phone && cleanedQuery.length >= 4 && r.phone.includes(cleanedQuery)
-        );
-
-        // 🔥 SORT FUZZY
-        fuzzy.sort((a, b) => a.score - b.score);
-        fuzzy = fuzzy.map(r => r.item);
-
-        // 🔥 MERGE (PRIORITY ORDER)
-        searchResults = [
-            ...phoneBoost,
-            ...exact,
-            ...fuzzy
-        ];
-
-        // 🔥 REMOVE DUPLICATES
-        searchResults = Array.from(
-            new Map(searchResults.map(i => [i.id, i])).values()
-        );
+        } catch (err) {
+            console.log("Algolia search error:", err);
+        }
     }
 
-    // 🔥 FILTER AFTER SEARCH
+    // =========================
+    // 🔥 APPLY FILTERS
+    // =========================
     let data = searchResults.filter(r => {
-        const matchesTab = (currentTab === 'all') || 
-            (currentTab === 'pending' && r.status !== 'completed') || 
-            (currentTab === 'fixed' && r.status === 'completed');
+        const cost = parseFloat(r.cost);
+        const paid = parseFloat(r.paid);
 
-        const matchesStatus = (filterVal === 'all') || (r.status === filterVal);
+        const validCost = !isNaN(cost) && cost > 0;
+        const validPaid = !isNaN(paid) ? paid : 0;
 
-        return matchesTab && matchesStatus;
+        const matchesTab =
+            isSearching ? true : (
+                currentTab === 'all' ||
+                (currentTab === 'pending' && r.status !== 'completed') ||
+                (currentTab === 'fixed' && r.status === 'completed')
+            );
+
+        let matchesFilter = true;
+
+        if (filterVal === 'paid') {
+            matchesFilter = validCost && validPaid >= cost;
+        } 
+        else if (filterVal === 'unpaid') {
+            matchesFilter = validCost && validPaid < cost;
+        } 
+        else if (filterVal !== 'all') {
+            matchesFilter = r.status === filterVal;
+        }
+
+        return matchesTab && matchesFilter;
     });
 
+    // =========================
+    // 🔥 UI LOCK
+    // =========================
+    const dateNav = document.getElementById('dateLabel')?.parentElement;
+
+    if (dateNav) {
+        dateNav.style.opacity = isSearching ? "0.4" : "1";
+        dateNav.style.pointerEvents = isSearching ? "none" : "auto";
+    }
+
+    // =========================
+    // 🔥 RENDER
+    // =========================
     renderTable(data);
 };
 
@@ -340,85 +451,135 @@ window.onload = () => {
     
 
     // Save Logic
-    const repairForm = document.getElementById('repairForm');
-    if (repairForm) {
-        repairForm.onsubmit = async function(e) {
-            e.preventDefault();
-            showToast("Syncing...");
+repairForm.onsubmit = async function (e) {
+    e.preventDefault();
 
-            let finalImageUrl = currentImageData;
-            console.log("Current User:", auth.currentUser);
-            try {
-                // ImgBB Upload
-                if (currentImageData && currentImageData.startsWith('data:image')) {
-                    const imgFormData = new FormData();
-                    imgFormData.append("image", currentImageData.split(',')[1]);
-                    const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, { method: "POST", body: imgFormData });
-                    const result = await res.json();
-                    if (result.success) finalImageUrl = result.data.url;
-                }
-        const passwordInput = document.getElementById('devicePassword').value;        
+    // Check if showToast exists before calling
+    if (typeof showToast === 'function') {
+        showToast("Syncing...");
+    }
 
-                const formData = {
-                    customer: document.getElementById('customerName').value,
-                    phone: document.getElementById('customerPhone').value,
-                    device: document.getElementById('deviceModel').value,
-                    sn: document.getElementById('snNumber').value,
-                    issue: document.getElementById('issueType').value,
-                  
-
-                    cost: Number(document.getElementById('cost').value) || 0,
-                    paid: Number(document.getElementById('paid').value) || 0,
-                    image: finalImageUrl,
-                    updatedAt: new Date().toISOString()
-                };
-                // 👇 only attach password if user typed something
-if (passwordInput.trim() !== "") {
-    formData.password = passwordInput;
-}
-
-if (currentlyEditingId) {
-    const r = repairs.find(x => x.id === currentlyEditingId);
-
-    const newPaid = formData.paid;
-    const newCost = formData.cost;
-
-    // ✅ only completed if cost > 0 AND fully paid
-    const isCompleted = newCost > 0 && newPaid >= newCost;
-
-    await updateDoc(doc(db, "repairs", r.id), {
-        ...formData,
-        status: isCompleted ? 'completed' : 'pending' // 👈 force correct state
-    });
-
-
-                } else {
-    const now = new Date();
-
-    let finalDate = now.toLocaleDateString();
+    let finalImageUrl = currentImageData;
 
     try {
-        if (window.NepaliDate) {
-            const nepDate = new NepaliDate(now);
-            finalDate = nepDate.format
-                ? nepDate.format('YYYY/MM/DD')
-                : nepDate.toString();
-        }
-    } catch (e) {
-        console.log("Nepali conversion failed:", e);
-    }
+        // --- 1. ImgBB Upload ---
+        if (currentImageData && currentImageData.startsWith('data:image')) {
+            const imgFormData = new FormData();
+            imgFormData.append("image", currentImageData.split(',')[1]);
 
-   const isCompleted = formData.cost > 0 && formData.paid >= formData.cost;
-const newEntry = {
-    ...formData,
-    status: isCompleted ? 'completed' : 'pending',
-    date: finalDate,
-    createdAt: new Date()
-};
-    await addDoc(collection(db, "repairs"), newEntry);
-}
-                window.toggleModal('entryModal');
-            } catch (err) { alert("Error: " + err.message); }
+            const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
+                method: "POST",
+                body: imgFormData
+            });
+
+            const result = await res.json();
+            if (result.success) finalImageUrl = result.data.url;
+        }
+
+        // --- 2. Data Collection with Safety Defaults ---
+        const passwordInput = document.getElementById('devicePassword')?.value || "";
+        const costVal = Number(document.getElementById('cost').value) || 0;
+        const paidVal = Number(document.getElementById('paid').value) || 0;
+      const isCompleted =
+    (costVal > 0 && paidVal >= costVal) ||   // normal case
+    (costVal === 0 && paidVal > 0); 
+    
+        const formData = {
+            customer: document.getElementById('customerName').value,
+            phone: document.getElementById('customerPhone').value,
+            device: document.getElementById('deviceModel').value,
+            sn: document.getElementById('snNumber').value,
+            issue: document.getElementById('issueType').value,
+            cost: costVal,
+            paid: paidVal,
+            image: finalImageUrl,
+            updatedAt: new Date().toISOString()
         };
+
+        if (passwordInput.trim() !== "") {
+            formData.password = passwordInput;
+        }
+
+        // --- 3. Save Logic ---
+        if (currentlyEditingId) {
+            // EDIT MODE
+            const r = repairs.find(x => x.id === currentlyEditingId);
+            if (!r) throw new Error("Record not found");
+
+            const updatedData = {
+                ...formData,
+                status: isCompleted ? 'completed' : 'pending'
+            };
+
+            await updateDoc(doc(db, "repairs", r.id), updatedData);
+            await algoliaIndex.saveObject({
+                objectID: r.id,
+                ...updatedData
+            });
+        } else {
+            // CREATE MODE
+            const now = new Date();
+            let finalDate = now.toLocaleDateString();
+
+            // FIXED: Proper safety check for NepaliDate constructor
+            try {
+                if (typeof window.NepaliDate === 'function') {
+                    const nepDate = new NepaliDate(now);
+                    finalDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
+                }
+            } catch (e) {
+                console.log("Nepali conversion skipped:", e);
+            }
+
+            const newEntry = {
+                ...formData,
+                status: isCompleted ? 'completed' : 'pending',
+                date: finalDate,
+                createdAt: new Date().toISOString()
+            };
+
+            const docRef = await addDoc(collection(db, "repairs"), newEntry);
+            await algoliaIndex.saveObject({
+                objectID: docRef.id,
+                ...newEntry
+            });
+        }
+
+        // --- 4. Cleanup & Modal Close ---
+        // FIXED: Verify toggleModal is a function before calling
+        if (typeof window.toggleModal === 'function') {
+            window.toggleModal('entryModal');
+        } else {
+            // Manual fallback if function is missing
+            const modal = document.getElementById('entryModal');
+            if (modal) modal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+    } catch (err) {
+        console.error("Save Error:", err);
+        alert("Error: " + err.message);
     }
 };
+
+window.syncAllToAlgolia = async function () {
+    console.log("🔥 Syncing ALL Firebase data to Algolia...");
+
+    const snapshot = await getDocs(collection(db, "repairs"));
+
+    const batch = [];
+
+    snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+
+        batch.push({
+            objectID: docSnap.id,
+            ...data
+        });
+    });
+
+    await algoliaIndex.saveObjects(batch);
+
+    console.log("✅ Sync complete:", batch.length);
+};
+}
