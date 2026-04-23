@@ -308,33 +308,37 @@ window.filterTable = async function () {
     // 🔥 APPLY FILTERS
     // =========================
     let data = searchResults.filter(r => {
-        const cost = parseFloat(r.cost);
-        const paid = parseFloat(r.paid);
+    const cost = Number(r.cost) || 0;
+    const paid = Number(r.paid) || 0;
 
-        const validCost = !isNaN(cost) && cost > 0;
-        const validPaid = !isNaN(paid) ? paid : 0;
+    const isPaid =
+        (cost > 0 && paid >= cost) ||   // normal case
+        (cost === 0 && paid > 0);       // your special case
 
-        const matchesTab =
-            isSearching ? true : (
-                currentTab === 'all' ||
-                (currentTab === 'pending' && r.status !== 'completed') ||
-                (currentTab === 'fixed' && r.status === 'completed')
-            );
+    const isUnpaid =
+        (cost > 0 && paid < cost);
 
-        let matchesFilter = true;
+    const matchesTab =
+        isSearching ? true : (
+            currentTab === 'all' ||
+            (currentTab === 'pending' && r.status !== 'completed') ||
+            (currentTab === 'fixed' && r.status === 'completed')
+        );
 
-        if (filterVal === 'paid') {
-            matchesFilter = validCost && validPaid >= cost;
-        } 
-        else if (filterVal === 'unpaid') {
-            matchesFilter = validCost && validPaid < cost;
-        } 
-        else if (filterVal !== 'all') {
-            matchesFilter = r.status === filterVal;
-        }
+    let matchesFilter = true;
 
-        return matchesTab && matchesFilter;
-    });
+    if (filterVal === 'paid') {
+        matchesFilter = isPaid;
+    } 
+    else if (filterVal === 'unpaid') {
+        matchesFilter = isUnpaid;
+    } 
+    else if (filterVal !== 'all') {
+        matchesFilter = r.status === filterVal;
+    }
+
+    return matchesTab && matchesFilter;
+});
 
     // =========================
     // 🔥 UI LOCK
@@ -483,7 +487,7 @@ repairForm.onsubmit = async function (e) {
       const isCompleted =
     (costVal > 0 && paidVal >= costVal) ||   // normal case
     (costVal === 0 && paidVal > 0); 
-    
+
         const formData = {
             customer: document.getElementById('customerName').value,
             phone: document.getElementById('customerPhone').value,
