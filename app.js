@@ -13,6 +13,7 @@ const firebaseConfig = {
     messagingSenderId: "736685646269",
     appId: "1:736685646269:web:387441b954cd4f123f72d4"
 };
+// -- starting......_//
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -241,40 +242,38 @@ window.updateStatus = async function(id) {
     }
 };
 
-
 window.editRepair = function(id) {
-    const r = repairs.find(x => x.id === id);
+    const r = repairs.find(x => x.id === id || x.objectID === id);
     if (!r) return;
+
+    const form = document.getElementById('repairForm');
+    if (form) form.dataset.editId = id;
+
     currentlyEditingId = id;
+
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
     document.getElementById('customerName').value = r.customer;
     document.getElementById('customerPhone').value = r.phone || '';
     document.getElementById('deviceModel').value = r.device;
     document.getElementById('snNumber').value = r.sn || '';
     document.getElementById('issueType').value = r.issue;
-    document.getElementById('cost').value = r.cost;
-    document.getElementById('paid').value = r.paid;
+    document.getElementById('cost').value = r.cost || 0;
+    document.getElementById('paid').value = r.paid || 0;
+
+    // ✅ IMAGE FIX
+    currentImageData = r.image || "";
+
+    const previewImg = document.getElementById('previewImg');
+    const previewDiv = document.getElementById('imagePreview');
+
     if (r.image) {
-        currentImageData = r.image || null;
-        const previewImg = document.getElementById('previewImg');
-        const previewDiv = document.getElementById('imagePreview');
-        
         if (previewImg) previewImg.src = r.image;
         if (previewDiv) previewDiv.classList.remove('hidden');
+    } else {
+        if (previewDiv) previewDiv.classList.add('hidden');
     }
+
     window.toggleModal('entryModal');
-};
-
-window.deleteRepair = async function(id) {
-    if(confirm("Permanently delete this entry?")) {
-        const r = repairs.find(x => x.id === id || x.objectID === id);
-        const docId = r?.objectID || r?.id || id;
-
-        if (docId) {
-            await deleteDoc(doc(db, "repairs", docId));
-            await algoliaIndex.deleteObject(docId);
-        }
-    }
 };
 
 window.filterTable = async function () {
