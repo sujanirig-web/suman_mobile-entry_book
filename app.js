@@ -482,12 +482,16 @@ repairForm.onsubmit = async function (e) {
 
         // --- 2. Data Collection with Safety Defaults ---
         const passwordInput = document.getElementById('devicePassword')?.value || "";
-        const costVal = Number(document.getElementById('cost').value) || 0;
-        const paidVal = Number(document.getElementById('paid').value) || 0;
-      const isCompleted =
-    (costVal > 0 && paidVal >= costVal) ||   // normal case
-    (costVal === 0 && paidVal > 0); 
+      let costVal = Number(document.getElementById('cost').value) || 0;
+let paidVal = Number(document.getElementById('paid').value) || 0;
 
+// 🔥 AUTO-FIX: if user entered paid first
+if (costVal === 0 && paidVal > 0) {
+    costVal = paidVal;
+}
+
+// 🔥 COMPLETION LOGIC (clean & reliable)
+const isCompleted = paidVal > 0 && paidVal >= costVal;
         const formData = {
             customer: document.getElementById('customerName').value,
             phone: document.getElementById('customerPhone').value,
