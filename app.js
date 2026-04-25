@@ -308,7 +308,7 @@ window.editRepair = function(id) {
         }
     }
 const form = document.getElementById('repairForm');
-if (form) form.dataset.editId = id;
+if (form)
 
 currentlyEditingId = id;
 
@@ -600,13 +600,14 @@ const isCompleted = paidVal > 0 && paidVal >= costVal;
 
         // --- 3. Save Logic ---
         // --- 3. Save Logic ---
-const form = document.getElementById('repairForm');
-const editId = form?.dataset.editId;
-
-if (editId) {
+if (currentlyEditingId) {
 
     const docId = currentlyEditingId;
 
+    if (!docId) {
+        console.error("❌ Missing docId");
+        return;
+    }
     const updatedData = {
         ...formData,
         status: isCompleted ? 'completed' : 'pending'
