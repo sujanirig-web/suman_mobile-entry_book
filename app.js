@@ -27,6 +27,7 @@ const algoliaIndex = algoliaClient.initIndex("repairs");
 
 
 // --- 2. GLOBAL STATE ---
+let displayedRepairs = [];
 let repairs = [];
 let currentTab = 'all';
 let currentDate = new Date();
@@ -220,6 +221,38 @@ window.viewImage = function(src) {
     if (fullImg) fullImg.src = src;
     if (modal) modal.classList.remove('hidden');
 };
+window.jumpToRepairDate = function(repair) {
+    if (!repair.createdAt) return;
+
+    let d;
+
+    if (typeof repair.createdAt === "string") {
+        d = new Date(repair.createdAt);
+    } else if (repair.createdAt.seconds) {
+        d = new Date(repair.createdAt.seconds * 1000);
+    }
+
+    if (isNaN(d)) return;
+
+    // ✅ set current date
+    currentDate = d;
+
+    // ✅ reload Firebase for that day
+    loadDataByDay();
+
+    // ✅ clear search (important UX)
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = '';
+
+    // optional toast
+    showToast("Jumped to selected date");
+};
+window.jumpToRepairDateById = function(id) {
+    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    if (!r) return;
+
+    window.jumpToRepairDate(r);
+};
 
 window.updateStatus = async function(id) {
     // Find repair in local state OR the ID passed directly
@@ -243,13 +276,41 @@ window.updateStatus = async function(id) {
 };
 
 window.editRepair = function(id) {
-    const r = repairs.find(x => x.id === id || x.objectID === id);
+    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
     if (!r) return;
 
-    const form = document.getElementById('repairForm');
-    if (form) form.dataset.editId = id;
+    // 🔥 AUTO JUMP if date mismatch
+    if (r.createdAt) {
+        let d;
 
-    currentlyEditingId = id;
+        if (typeof r.createdAt === "string") {
+            d = new Date(r.createdAt);
+        } else if (r.createdAt.seconds) {
+            d = new Date(r.createdAt.seconds * 1000);
+        }
+
+        if (d && !isNaN(d)) {
+            const currentDay = new Date(currentDate).toDateString();
+            const targetDay = new Date(d).toDateString();
+
+            if (currentDay !== targetDay) {
+                // ⏳ Jump first, then reopen edit
+                currentDate = d;
+                loadDataByDay();
+
+                // wait for Firebase to reload, then reopen edit
+                setTimeout(() => {
+                    window.editRepair(id);
+                }, 500);
+
+                return; // stop here (important)
+            }
+        }
+    }
+const form = document.getElementById('repairForm');
+if (form) form.dataset.editId = id;
+
+currentlyEditingId = id;
 
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
     document.getElementById('customerName').value = r.customer;
@@ -260,7 +321,6 @@ window.editRepair = function(id) {
     document.getElementById('cost').value = r.cost || 0;
     document.getElementById('paid').value = r.paid || 0;
 
-    // ✅ IMAGE FIX
     currentImageData = r.image || "";
 
     const previewImg = document.getElementById('previewImg');
@@ -274,6 +334,22 @@ window.editRepair = function(id) {
     }
 
     window.toggleModal('entryModal');
+};
+window.deleteRepair = async function(id) {
+    if (!confirm("Delete this entry?")) return;
+
+    try {
+        // 🔥 delete from Firebase
+        await deleteDoc(doc(db, "repairs", id));
+
+        // 🔥 delete from Algolia
+        await algoliaIndex.deleteObject(id);
+
+        showToast("Deleted successfully");
+    } catch (err) {
+        console.error(err);
+        alert("Delete failed");
+    }
 };
 
 window.filterTable = async function () {
@@ -352,7 +428,8 @@ window.filterTable = async function () {
     // =========================
     // 🔥 RENDER
     // =========================
-    renderTable(data);
+    displayedRepairs = data; // 👈 IMPORTANT
+renderTable(data);
 };
 
 // --- 6. RENDERING LOGIC ---
@@ -399,12 +476,26 @@ function renderTable(data = repairs) {
     <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">
         Due: रू${due.toLocaleString()}
     </div>
-</td>
             </td>
             <td class="px-8 py-6 text-right space-x-3">
-                <button onclick="editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
-                <button onclick="deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
-            </td>
+
+    <button onclick="event.stopPropagation(); editRepair('${repair.id}')" 
+        class="text-slate-300 hover:text-indigo-600">
+        <i class="fas fa-edit"></i>
+    </button>
+
+    <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" 
+        class="text-slate-300 hover:text-red-500">
+        <i class="fas fa-trash"></i>
+    </button>
+
+    <!-- ✅ DATE JUMP BUTTON -->
+    <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" 
+        class="text-slate-300 hover:text-blue-500">
+        🏴
+    </button>
+
+</td>
         `;
         tbody.appendChild(tr);
     });
@@ -459,7 +550,7 @@ repairForm.onsubmit = async function (e) {
 
     // Check if showToast exists before calling
     if (typeof showToast === 'function') {
-        showToast("Syncing...");
+        showToast("Saving...");
     }
 
     let finalImageUrl = currentImageData;
@@ -508,22 +599,28 @@ const isCompleted = paidVal > 0 && paidVal >= costVal;
         }
 
         // --- 3. Save Logic ---
-        if (currentlyEditingId) {
-            // EDIT MODE
-            const r = repairs.find(x => x.id === currentlyEditingId);
-            if (!r) throw new Error("Record not found");
+        // --- 3. Save Logic ---
+const form = document.getElementById('repairForm');
+const editId = form?.dataset.editId;
 
-            const updatedData = {
-                ...formData,
-                status: isCompleted ? 'completed' : 'pending'
-            };
+if (editId) {
 
-            await updateDoc(doc(db, "repairs", r.id), updatedData);
-            await algoliaIndex.saveObject({
-                objectID: r.id,
-                ...updatedData
-            });
-        } else {
+    const docId = currentlyEditingId;
+
+    const updatedData = {
+        ...formData,
+        status: isCompleted ? 'completed' : 'pending'
+    };
+
+    await updateDoc(doc(db, "repairs", docId), updatedData);
+
+    await algoliaIndex.partialUpdateObject({
+        objectID: docId,
+        ...updatedData
+    });
+
+} else {
+        
             // CREATE MODE
             const now = new Date();
             let finalDate = now.toLocaleDateString();
