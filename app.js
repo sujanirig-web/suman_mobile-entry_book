@@ -1,10 +1,9 @@
 // --- 1. FIREBASE IMPORTS ---
-// Change 'algoliasearch-lite' to 'algoliasearch'
 import algoliasearch from 'https://cdn.jsdelivr.net/npm/algoliasearch@4.22.1/dist/algoliasearch.esm.browser.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
 const firebaseConfig = {
     apiKey: "AIzaSyDFEwq_evYAot2DEtErBO58u6ABWBjVZ5M",
     authDomain: "relife-entry-book.firebaseapp.com",
@@ -13,18 +12,15 @@ const firebaseConfig = {
     messagingSenderId: "736685646269",
     appId: "1:736685646269:web:387441b954cd4f123f72d4"
 };
-// -- starting......_//
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth();
 const algoliaClient = algoliasearch(
     "SRL627FPXS",
-    "a794f93efc346a4a17d20fcebff54ad6" // temporary (fine for now)
+    "a794f93efc346a4a17d20fcebff54ad6"
 );
-
 const algoliaIndex = algoliaClient.initIndex("repairs");
-
 
 // --- 2. GLOBAL STATE ---
 let displayedRepairs = [];
@@ -33,168 +29,136 @@ let currentTab = 'all';
 let currentDate = new Date();
 let currentImageData = null;
 let currentlyEditingId = null;
+let unsubscribe = null;
 
 // --- 3. AUTH GATEKEEPER ---
 onAuthStateChanged(auth, (user) => {
-    console.log("USER:", user); // 👈 ADD THIS
-
     const overlay = document.getElementById('loginOverlay');
     if (overlay) {
         if (user) {
             overlay.style.display = 'none';
-            loadDataByDay(); 
+            loadDataByDay();
         } else {
             overlay.style.display = 'flex';
             repairs = [];
-            window.filterTable();
+            if (typeof window.filterTable === 'function') window.filterTable();
         }
     }
 });
 
+// --- 4. HELPER: GET DAY RANGE ---
 function getDayRange(date) {
     const start = new Date(date);
     start.setHours(0, 0, 0, 0);
-
     const end = new Date(date);
     end.setHours(23, 59, 59, 999);
-
     return { start, end };
 }
-let unsubscribe = null;
 
+// --- 5. LOAD DATA FOR CURRENT DAY (REAL‑TIME) ---
 function loadDataByDay() {
     if (unsubscribe) unsubscribe();
 
-    const q = query(
-        collection(db, "repairs"),
-        orderBy("createdAt", "desc")
-    );
-
+    const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
     unsubscribe = onSnapshot(q, (snapshot) => {
-        const allData = snapshot.docs.map(doc => ({
-            ...doc.data(),
-            id: doc.id
-        }));
-
+        const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         const { start, end } = getDayRange(currentDate);
 
         repairs = allData.filter(r => {
-            if (!r.createdAt) return true; // 👈 show old/broken entries
-
+            if (!r.createdAt) return true;
             let d;
-
-            // ✅ handle string
-            if (typeof r.createdAt === "string") {
-                d = new Date(r.createdAt);
-            }
-            // ✅ handle Firestore timestamp
-            else if (r.createdAt.seconds) {
-                d = new Date(r.createdAt.seconds * 1000);
-            }
-            else {
-                return true; // 👈 fallback: show it
-            }
-
-            // ❌ invalid date → still show it
+            if (typeof r.createdAt === "string") d = new Date(r.createdAt);
+            else if (r.createdAt.seconds) d = new Date(r.createdAt.seconds * 1000);
+            else return true;
             if (isNaN(d)) return true;
-
             return d >= start && d <= end;
         });
-
-        console.log("FILTERED:", repairs);
 
         updateDateLabel();
         window.filterTable();
     });
 }
 
-// Label update
+// --- 6. UPDATE DATE LABEL (NEPALI / ENGLISH) ---
 function updateDateLabel() {
     const label = document.getElementById('dateLabel');
-
     if (!label) return;
-
     try {
         if (window.NepaliDate) {
             const nepDate = new NepaliDate(currentDate);
-
-            label.textContent = nepDate.format
-                ? nepDate.format('YYYY/MM/DD')
-                : nepDate.toString();
+            label.textContent = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
         } else {
             label.textContent = currentDate.toLocaleDateString();
         }
     } catch (e) {
-        console.log("BS conversion error:", e);
         label.textContent = currentDate.toLocaleDateString();
     }
 }
 
-// 👇 make it visible to HTMl
+// --- 7. TAB SWITCHING ---
 function setTab(tab) {
     currentTab = tab;
-
-    // update UI active card (optional but good)
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
     const active = document.getElementById(`card-${tab}`);
     if (active) active.classList.add('active-tab');
-
     window.filterTable();
 }
 window.setTab = setTab;
+
+// --- 8. DATE NAVIGATION (with search reset) ---
+function clearSearchInput() {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = '';
+}
+
 window.nextDay = function () {
     currentDate.setDate(currentDate.getDate() + 1);
+    clearSearchInput();
     loadDataByDay();
 };
 
 window.prevDay = function () {
     currentDate.setDate(currentDate.getDate() - 1);
+    clearSearchInput();
     loadDataByDay();
 };
 
 window.goToday = function () {
     currentDate = new Date();
+    clearSearchInput();
     loadDataByDay();
 };
 
-
-// --- 5. EXPORTING ALL FUNCTIONS TO WINDOW (Fixes "Not Defined" Errors) ---
-
-window.toggleModal = function(id) {
-    console.log("Opening Modal:", id); 
+// --- 9. MODAL HANDLING ---
+window.toggleModal = function (id) {
     const modal = document.getElementById(id);
-    if (!modal) {
-        console.error("Could not find modal with ID:", id);
-        return;
-    }
-
+    if (!modal) return;
     const isOpening = modal.classList.contains('hidden');
-    
     if (isOpening) {
         modal.classList.remove('hidden');
-        modal.classList.add('flex'); // Add this to ensure centering works
+        modal.classList.add('flex');
         document.body.style.overflow = 'hidden';
     } else {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
         document.body.style.overflow = 'auto';
-
-        // Reset form only when closing the entry modal
         if (id === 'entryModal') {
             const form = document.getElementById('repairForm');
             if (form) form.reset();
             window.removeImage();
             currentlyEditingId = null;
-            document.getElementById('modalTitle').textContent = "New Repair Job";
+            const title = document.getElementById('modalTitle');
+            if (title) title.textContent = "New Repair Job";
         }
     }
 };
 
-window.handleImageUpload = function(input) {
+// --- 10. IMAGE UPLOAD & PREVIEW ---
+window.handleImageUpload = function (input) {
     const file = input.files[0];
     if (file) {
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = function (e) {
             currentImageData = e.target.result;
             const previewImg = document.getElementById('previewImg');
             const previewDiv = document.getElementById('imagePreview');
@@ -205,7 +169,7 @@ window.handleImageUpload = function(input) {
     }
 };
 
-window.removeImage = function() {
+window.removeImage = function () {
     currentImageData = null;
     const previewDiv = document.getElementById('imagePreview');
     if (previewDiv) previewDiv.classList.add('hidden');
@@ -215,136 +179,102 @@ window.removeImage = function() {
     if (camera) camera.value = '';
 };
 
-window.viewImage = function(src) {
+window.viewImage = function (src) {
     const modal = document.getElementById('viewImageModal');
     const fullImg = document.getElementById('fullSizeImage');
     if (fullImg) fullImg.src = src;
     if (modal) modal.classList.remove('hidden');
 };
-window.jumpToRepairDate = function(repair) {
+
+// --- 11. JUMP TO DATE OF A REPAIR ---
+window.jumpToRepairDate = function (repair) {
     if (!repair.createdAt) return;
-
     let d;
-
-    if (typeof repair.createdAt === "string") {
-        d = new Date(repair.createdAt);
-    } else if (repair.createdAt.seconds) {
-        d = new Date(repair.createdAt.seconds * 1000);
-    }
-
+    if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
+    else if (repair.createdAt.seconds) d = new Date(repair.createdAt.seconds * 1000);
     if (isNaN(d)) return;
-
-    // ✅ set current date
     currentDate = d;
-
-    // ✅ reload Firebase for that day
+    clearSearchInput();
     loadDataByDay();
-
-    // ✅ clear search (important UX)
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) searchInput.value = '';
-
-    // optional toast
     showToast("Jumped to selected date");
 };
-window.jumpToRepairDateById = function(id) {
-    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
-    if (!r) return;
 
-    window.jumpToRepairDate(r);
+window.jumpToRepairDateById = function (id) {
+    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    if (r) window.jumpToRepairDate(r);
 };
 
-window.updateStatus = async function(id) {
-    // Find repair in local state OR the ID passed directly
-    const r = repairs.find(x => x.id === id);
-    const docId = r ? (r.id || r.objectID) : id;
-    
-    if(docId) {
-        const flow = ['pending', 'repairing', 'completed', 'cancelled'];
-        // Use a fallback status if r isn't found in current local day view
-        const currentStatus = r ? r.status : 'pending';
-        const nextStatus = flow[(flow.indexOf(currentStatus) + 1) % flow.length];
-        
-        await updateDoc(doc(db, "repairs", docId), { status: nextStatus });
-        
-        // 🔥 CRITICAL: Update Algolia too so search stays in sync
-        await algoliaIndex.partialUpdateObject({
-            objectID: docId,
-            status: nextStatus
-        });
+// --- 12. UPDATE STATUS (CYCLE pending → repairing → completed → cancelled) ---
+window.updateStatus = async function (id) {
+    // Find the repair in current data to know its current status
+    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
+    if (!repair) {
+        showToast("Repair not found", true);
+        return;
+    }
+    const flow = ['pending', 'repairing', 'completed', 'cancelled'];
+    const currentStatus = repair.status || 'pending';
+    const nextStatus = flow[(flow.indexOf(currentStatus) + 1) % flow.length];
+    try {
+        await updateDoc(doc(db, "repairs", id), { status: nextStatus });
+        await algoliaIndex.partialUpdateObject({ objectID: id, status: nextStatus });
+        showToast(`Status changed to ${nextStatus}`);
+    } catch (err) {
+        console.error(err);
+        alert("Failed to update status");
     }
 };
 
-window.editRepair = function(id) {
-    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
-    if (!r) return;
+// --- 13. EDIT REPAIR (with auto‑jump to correct day) ---
+window.editRepair = function (id) {
+    const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    if (!repair) return;
 
-    // 🔥 AUTO JUMP if date mismatch
-    if (r.createdAt) {
+    // Auto‑jump if the repair belongs to a different day
+    if (repair.createdAt) {
         let d;
-
-        if (typeof r.createdAt === "string") {
-            d = new Date(r.createdAt);
-        } else if (r.createdAt.seconds) {
-            d = new Date(r.createdAt.seconds * 1000);
-        }
-
-        if (d && !isNaN(d)) {
-            const currentDay = new Date(currentDate).toDateString();
-            const targetDay = new Date(d).toDateString();
-
-            if (currentDay !== targetDay) {
-                // ⏳ Jump first, then reopen edit
-                currentDate = d;
-                loadDataByDay();
-
-                // wait for Firebase to reload, then reopen edit
-                setTimeout(() => {
-                    window.editRepair(id);
-                }, 500);
-
-                return; // stop here (important)
-            }
+        if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
+        else if (repair.createdAt.seconds) d = new Date(repair.createdAt.seconds * 1000);
+        if (d && !isNaN(d) && d.toDateString() !== currentDate.toDateString()) {
+            currentDate = d;
+            clearSearchInput();
+            loadDataByDay();
+            // Re‑trigger edit after data reloads
+            setTimeout(() => window.editRepair(id), 500);
+            return;
         }
     }
-const form = document.getElementById('repairForm');
-if (form)
 
-currentlyEditingId = id;
-
+    // Populate form
+    currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
-    document.getElementById('customerName').value = r.customer;
-    document.getElementById('customerPhone').value = r.phone || '';
-    document.getElementById('deviceModel').value = r.device;
-    document.getElementById('snNumber').value = r.sn || '';
-    document.getElementById('issueType').value = r.issue;
-    document.getElementById('cost').value = r.cost || 0;
-    document.getElementById('paid').value = r.paid || 0;
+    document.getElementById('customerName').value = repair.customer || '';
+    document.getElementById('customerPhone').value = repair.phone || '';
+    document.getElementById('deviceModel').value = repair.device || '';
+    document.getElementById('snNumber').value = repair.sn || '';
+    document.getElementById('issueType').value = repair.issue || '';
+    document.getElementById('cost').value = repair.cost || 0;
+    document.getElementById('paid').value = repair.paid || 0;
+    document.getElementById('devicePassword').value = repair.password || '';
 
-    currentImageData = r.image || "";
-
+    currentImageData = repair.image || null;
     const previewImg = document.getElementById('previewImg');
     const previewDiv = document.getElementById('imagePreview');
-
-    if (r.image) {
-        if (previewImg) previewImg.src = r.image;
+    if (repair.image) {
+        if (previewImg) previewImg.src = repair.image;
         if (previewDiv) previewDiv.classList.remove('hidden');
     } else {
         if (previewDiv) previewDiv.classList.add('hidden');
     }
-
     window.toggleModal('entryModal');
 };
-window.deleteRepair = async function(id) {
+
+// --- 14. DELETE REPAIR ---
+window.deleteRepair = async function (id) {
     if (!confirm("Delete this entry?")) return;
-
     try {
-        // 🔥 delete from Firebase
         await deleteDoc(doc(db, "repairs", id));
-
-        // 🔥 delete from Algolia
         await algoliaIndex.deleteObject(id);
-
         showToast("Deleted successfully");
     } catch (err) {
         console.error(err);
@@ -352,92 +282,59 @@ window.deleteRepair = async function(id) {
     }
 };
 
+// --- 15. FILTER & SEARCH (Algolia + local) ---
 window.filterTable = async function () {
     const rawQuery = document.getElementById('searchInput')?.value.trim() || "";
-    const queryText = rawQuery.toLowerCase();
     const isSearching = rawQuery.length >= 2;
     const filterVal = document.getElementById('statusFilter')?.value || "all";
 
     let searchResults = [...repairs];
 
-    // =========================
-    // 🔥 ALGOLIA SEARCH
-    // =========================
     if (isSearching) {
         try {
-            const res = await algoliaIndex.search(rawQuery, {
-                hitsPerPage: 200
-            });
-
-            searchResults = res.hits.map(hit => ({
-                ...hit,
-                id: hit.objectID
-            }));
-
+            const res = await algoliaIndex.search(rawQuery, { hitsPerPage: 200 });
+            searchResults = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
         } catch (err) {
             console.log("Algolia search error:", err);
         }
     }
 
-    // =========================
-    // 🔥 APPLY FILTERS
-    // =========================
     let data = searchResults.filter(r => {
-    const cost = Number(r.cost) || 0;
-    const paid = Number(r.paid) || 0;
+        const cost = Number(r.cost) || 0;
+        const paid = Number(r.paid) || 0;
+        const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+        const isUnpaid = (cost > 0 && paid < cost);
 
-    const isPaid =
-        (cost > 0 && paid >= cost) ||   // normal case
-        (cost === 0 && paid > 0);       // your special case
-
-    const isUnpaid =
-        (cost > 0 && paid < cost);
-
-    const matchesTab =
-        isSearching ? true : (
+        const matchesTab = isSearching ? true : (
             currentTab === 'all' ||
             (currentTab === 'pending' && r.status !== 'completed') ||
             (currentTab === 'fixed' && r.status === 'completed')
         );
 
-    let matchesFilter = true;
+        let matchesFilter = true;
+        if (filterVal === 'paid') matchesFilter = isPaid;
+        else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+        else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
 
-    if (filterVal === 'paid') {
-        matchesFilter = isPaid;
-    } 
-    else if (filterVal === 'unpaid') {
-        matchesFilter = isUnpaid;
-    } 
-    else if (filterVal !== 'all') {
-        matchesFilter = r.status === filterVal;
-    }
+        return matchesTab && matchesFilter;
+    });
 
-    return matchesTab && matchesFilter;
-});
-
-    // =========================
-    // 🔥 UI LOCK
-    // =========================
+    // Lock date navigation during search
     const dateNav = document.getElementById('dateLabel')?.parentElement;
-
     if (dateNav) {
         dateNav.style.opacity = isSearching ? "0.4" : "1";
         dateNav.style.pointerEvents = isSearching ? "none" : "auto";
     }
 
-    // =========================
-    // 🔥 RENDER
-    // =========================
-    displayedRepairs = data; // 👈 IMPORTANT
-renderTable(data);
+    displayedRepairs = data;
+    renderTable(data);
 };
 
-// --- 6. RENDERING LOGIC ---
+// --- 16. RENDER TABLE ---
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
     const noData = document.getElementById('noDataMessage');
     if (!tbody) return;
-
     tbody.innerHTML = '';
     if (noData) noData.classList.toggle('hidden', data.length > 0);
 
@@ -450,84 +347,64 @@ function renderTable(data = repairs) {
                 <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
                 <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
                 <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
-                 <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.phone || ''}</div>
-                 
+                <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.phone || ''}</div>
             </td>
             <td class="px-7 py-7">
-                <div class="font-bold text-slate-800 text-sm">${repair.customer}</div>
-                <div class="font-bold text-green-600 text-[16px] uppercase">${repair.device}</div>
-                  <div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password}</div>
+                <div class="font-bold text-slate-800 text-sm">${repair.customer || ''}</div>
+                <div class="font-bold text-green-600 text-[16px] uppercase">${repair.device || ''}</div>
+                <div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password || ''}</div>
             </td>
             <td class="px-6 py-6">
-                <div class="text-xs font-bold text-slate-600">${repair.issue}</div>
+                <div class="text-xs font-bold text-slate-600">${repair.issue || ''}</div>
                 ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
-             
             </td>
             <td class="px-6 py-6">
-                <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status}</button>
+                <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status || 'pending'}</button>
             </td>
-           <td class="px-6 py-6">
-    <div class="text-[11px] font-bold text-slate-700">
-        Total: रू${(Number(repair.cost) || 0).toLocaleString()}
-    </div>
-    <div class="text-[11px] font-bold text-emerald-600">
-        Paid: रू${(Number(repair.paid) || 0).toLocaleString()}
-    </div>
-    <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">
-        Due: रू${due.toLocaleString()}
-    </div>
+            <td class="px-6 py-6">
+                <div class="text-[11px] font-bold text-slate-700">Total: रू${(Number(repair.cost) || 0).toLocaleString()}</div>
+                <div class="text-[11px] font-bold text-emerald-600">Paid: रू${(Number(repair.paid) || 0).toLocaleString()}</div>
+                <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
             </td>
             <td class="px-8 py-6 text-right space-x-3">
-
-    <button onclick="event.stopPropagation(); editRepair('${repair.id}')" 
-        class="text-slate-300 hover:text-indigo-600">
-        <i class="fas fa-edit"></i>
-    </button>
-
-    <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" 
-        class="text-slate-300 hover:text-red-500">
-        <i class="fas fa-trash"></i>
-    </button>
-
-    <!-- ✅ DATE JUMP BUTTON -->
-    <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" 
-        class="text-slate-300 hover:text-blue-500">
-        🏴
-    </button>
-
-</td>
+                <button onclick="event.stopPropagation(); editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
+                <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
+                <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
+            </td>
         `;
         tbody.appendChild(tr);
     });
     updateStats();
 }
 
+// --- 17. UPDATE STATS CARDS ---
 function updateStats() {
     const pending = repairs.filter(r => r.status === 'pending' || r.status === 'repairing').length;
     const fixed = repairs.filter(r => r.status === 'completed').length;
     const revenue = repairs.reduce((a, c) => a + (Number(c.paid) || 0), 0);
     const credit = repairs.reduce((a, c) => a + Math.max(0, (Number(c.cost) || 0) - (Number(c.paid) || 0)), 0);
 
-    if(document.getElementById('stat-total')) document.getElementById('stat-total').textContent = repairs.length;
-    if(document.getElementById('stat-active')) document.getElementById('stat-active').textContent = pending;
-    if(document.getElementById('stat-fixed-count')) document.getElementById('stat-fixed-count').textContent = fixed;
-    if(document.getElementById('stat-revenue')) document.getElementById('stat-revenue').textContent = `रू${revenue.toLocaleString()}`;
-    if(document.getElementById('stat-credit')) document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
+    if (document.getElementById('stat-total')) document.getElementById('stat-total').textContent = repairs.length;
+    if (document.getElementById('stat-active')) document.getElementById('stat-active').textContent = pending;
+    if (document.getElementById('stat-fixed-count')) document.getElementById('stat-fixed-count').textContent = fixed;
+    if (document.getElementById('stat-revenue')) document.getElementById('stat-revenue').textContent = `रू${revenue.toLocaleString()}`;
+    if (document.getElementById('stat-credit')) document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
 }
 
-function showToast(msg) {
+// --- 18. TOAST NOTIFICATION ---
+function showToast(msg, isError = false) {
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toastMessage');
-    if(toast && toastMsg) {
+    if (toast && toastMsg) {
         toastMsg.textContent = msg;
         toast.classList.remove('translate-y-20', 'opacity-0');
         setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
     }
 }
 
-// --- 7. STARTUP & FORM SUBMIT ---
+// --- 19. FORM SUBMIT (CREATE / UPDATE) ---
 window.onload = () => {
-    // Login Logic
+    // Login handler
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
         loginBtn.onclick = async () => {
@@ -542,149 +419,97 @@ window.onload = () => {
             }
         };
     }
-    
 
-    // Save Logic
-repairForm.onsubmit = async function (e) {
-    e.preventDefault();
+    // Save handler
+    const form = document.getElementById('repairForm');
+    if (!form) return;
 
-    // Check if showToast exists before calling
-    if (typeof showToast === 'function') {
+    form.onsubmit = async function (e) {
+        e.preventDefault();
         showToast("Saving...");
-    }
 
-    let finalImageUrl = currentImageData;
-
-    try {
-        // --- 1. ImgBB Upload ---
-        if (currentImageData && currentImageData.startsWith('data:image')) {
-            const imgFormData = new FormData();
-            imgFormData.append("image", currentImageData.split(',')[1]);
-
-            const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
-                method: "POST",
-                body: imgFormData
-            });
-
-            const result = await res.json();
-            if (result.success) finalImageUrl = result.data.url;
-        }
-
-        // --- 2. Data Collection with Safety Defaults ---
-        const passwordInput = document.getElementById('devicePassword')?.value || "";
-      let costVal = Number(document.getElementById('cost').value) || 0;
-let paidVal = Number(document.getElementById('paid').value) || 0;
-
-// 🔥 AUTO-FIX: if user entered paid first
-if (costVal === 0 && paidVal > 0) {
-    costVal = paidVal;
-}
-
-// 🔥 COMPLETION LOGIC (clean & reliable)
-const isCompleted = paidVal > 0 && paidVal >= costVal;
-        const formData = {
-            customer: document.getElementById('customerName').value,
-            phone: document.getElementById('customerPhone').value,
-            device: document.getElementById('deviceModel').value,
-            sn: document.getElementById('snNumber').value,
-            issue: document.getElementById('issueType').value,
-            cost: costVal,
-            paid: paidVal,
-            image: finalImageUrl,
-            updatedAt: new Date().toISOString()
-        };
-
-        if (passwordInput.trim() !== "") {
-            formData.password = passwordInput;
-        }
-
-        // --- 3. Save Logic ---
-        // --- 3. Save Logic ---
-if (currentlyEditingId) {
-
-    const docId = currentlyEditingId;
-
-    if (!docId) {
-        console.error("❌ Missing docId");
-        return;
-    }
-    const updatedData = {
-        ...formData,
-        status: isCompleted ? 'completed' : 'pending'
-    };
-
-    await updateDoc(doc(db, "repairs", docId), updatedData);
-
-    await algoliaIndex.partialUpdateObject({
-        objectID: docId,
-        ...updatedData
-    });
-
-} else {
-        
-            // CREATE MODE
-            const now = new Date();
-            let finalDate = now.toLocaleDateString();
-
-            // FIXED: Proper safety check for NepaliDate constructor
-            try {
-                if (typeof window.NepaliDate === 'function') {
-                    const nepDate = new NepaliDate(now);
-                    finalDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
-                }
-            } catch (e) {
-                console.log("Nepali conversion skipped:", e);
+        let finalImageUrl = currentImageData;
+        try {
+            // Upload image to ImgBB if it's a new base64 image
+            if (currentImageData && currentImageData.startsWith('data:image')) {
+                const imgFormData = new FormData();
+                imgFormData.append("image", currentImageData.split(',')[1]);
+                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
+                    method: "POST",
+                    body: imgFormData
+                });
+                const result = await res.json();
+                if (result.success) finalImageUrl = result.data.url;
             }
 
-            const newEntry = {
-                ...formData,
-                status: isCompleted ? 'completed' : 'pending',
-                date: finalDate,
-                createdAt: new Date().toISOString()
+            let costVal = Number(document.getElementById('cost').value) || 0;
+            let paidVal = Number(document.getElementById('paid').value) || 0;
+
+            // Auto-fix: if cost is 0 but paid > 0, set cost = paid (prevents negative due)
+            if (costVal === 0 && paidVal > 0) costVal = paidVal;
+
+            const isCompleted = paidVal > 0 && paidVal >= costVal;
+            const formData = {
+                customer: document.getElementById('customerName').value,
+                phone: document.getElementById('customerPhone').value,
+                device: document.getElementById('deviceModel').value,
+                sn: document.getElementById('snNumber').value,
+                issue: document.getElementById('issueType').value,
+                cost: costVal,
+                paid: paidVal,
+                image: finalImageUrl,
+                updatedAt: new Date().toISOString()
             };
+            const passwordInput = document.getElementById('devicePassword')?.value;
+            if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
 
-            const docRef = await addDoc(collection(db, "repairs"), newEntry);
-            await algoliaIndex.saveObject({
-                objectID: docRef.id,
-                ...newEntry
-            });
-        }
+            if (currentlyEditingId) {
+                // UPDATE EXISTING
+                const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
+                await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
+                await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
+                showToast("Updated successfully");
+            } else {
+                // CREATE NEW
+                const now = new Date();
+                let finalDate = now.toLocaleDateString();
+                try {
+                    if (typeof window.NepaliDate === 'function') {
+                        const nepDate = new NepaliDate(now);
+                        finalDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
+                    }
+                } catch (e) { /* fallback to English date */ }
 
-        // --- 4. Cleanup & Modal Close ---
-        // FIXED: Verify toggleModal is a function before calling
-        if (typeof window.toggleModal === 'function') {
+                const newEntry = {
+                    ...formData,
+                    status: isCompleted ? 'completed' : 'pending',
+                    date: finalDate,
+                    createdAt: now.toISOString()
+                };
+                const docRef = await addDoc(collection(db, "repairs"), newEntry);
+                await algoliaIndex.saveObject({ objectID: docRef.id, ...newEntry });
+                showToast("Repair added");
+            }
+
+            // Reset and close modal
             window.toggleModal('entryModal');
-        } else {
-            // Manual fallback if function is missing
-            const modal = document.getElementById('entryModal');
-            if (modal) modal.classList.add('hidden');
-            document.body.style.overflow = 'auto';
+            currentlyEditingId = null;
+            currentImageData = null;
+        } catch (err) {
+            console.error("Save Error:", err);
+            alert("Error: " + err.message);
         }
-
-    } catch (err) {
-        console.error("Save Error:", err);
-        alert("Error: " + err.message);
-    }
+    };
 };
 
+// --- 20. SYNC ALL TO ALGOLIA (UTILITY, NOT USED AUTOMATICALLY) ---
 window.syncAllToAlgolia = async function () {
     console.log("🔥 Syncing ALL Firebase data to Algolia...");
-
     const snapshot = await getDocs(collection(db, "repairs"));
-
     const batch = [];
-
     snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-
-        batch.push({
-            objectID: docSnap.id,
-            ...data
-        });
+        batch.push({ objectID: docSnap.id, ...docSnap.data() });
     });
-
     await algoliaIndex.saveObjects(batch);
-
     console.log("✅ Sync complete:", batch.length);
 };
-}
