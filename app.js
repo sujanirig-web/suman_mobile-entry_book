@@ -1,7 +1,7 @@
 // --- 1. FIREBASE IMPORTS ---
 import algoliasearch from 'https://cdn.jsdelivr.net/npm/algoliasearch@4.22.1/dist/algoliasearch.esm.browser.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -31,6 +31,67 @@ let currentImageData = null;
 let currentlyEditingId = null;
 let unsubscribe = null;
 
+// --- Deduplication map for logs (prevents duplicate entries) ---
+const lastLogDetails = new Map();
+
+// --- Request notification permission on load ---
+if ("Notification" in window) {
+    Notification.requestPermission();
+}
+
+// --- Helper: Send system notification + toast ---
+function sendNotification(title, body) {
+    showToast(body);
+    if (Notification.permission === "granted") {
+        new Notification(title, { body });
+    }
+}
+
+// --- Helper: Log a change to Firestore (with deduplication) ---
+// --- Deduplication map with timestamps ---
+const pendingLogs = new Map(); // key → timestamp
+
+async function logChange(repairId, field, oldValue, newValue, repairTitle) {
+    const oldStr = String(oldValue);
+    const newStr = String(newValue);
+    const key = `${repairId}|${field}|${oldStr}|${newStr}`;
+
+    // Check if this exact change is already in progress or was recently written
+    const lastTime = pendingLogs.get(key);
+    const now = Date.now();
+    if (lastTime && (now - lastTime) < 10000) { // 10 seconds window
+        console.warn(`⚠️ Duplicate log blocked for key: ${key} (${(now - lastTime)}ms since last)`);
+        return;
+    }
+
+    // Lock this key
+    pendingLogs.set(key, now);
+    console.log(`📝 Attempting to log: ${key}`);
+
+    const user = auth.currentUser;
+    const userEmail = user ? user.email : "unknown";
+    try {
+        await addDoc(collection(db, "logs"), {
+            repairId,
+            field,
+            oldValue: oldStr,
+            newValue: newStr,
+            changedBy: userEmail,
+            timestamp: new Date().toISOString(),
+            repairTitle
+        });
+        console.log(`✅ Log written: ${key}`);
+    } catch (err) {
+        console.error("Failed to write log:", err);
+        // Remove lock on error so user can retry
+        pendingLogs.delete(key);
+    }
+    // Note: lock stays for 10 seconds to prevent any duplicate from same save
+    setTimeout(() => {
+        pendingLogs.delete(key);
+    }, 10000);
+}
+
 // --- 3. AUTH GATEKEEPER ---
 onAuthStateChanged(auth, (user) => {
     const overlay = document.getElementById('loginOverlay');
@@ -58,12 +119,10 @@ function getDayRange(date) {
 // --- 5. LOAD DATA FOR CURRENT DAY (REAL‑TIME) ---
 function loadDataByDay() {
     if (unsubscribe) unsubscribe();
-
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         const { start, end } = getDayRange(currentDate);
-
         repairs = allData.filter(r => {
             if (!r.createdAt) return true;
             let d;
@@ -73,7 +132,6 @@ function loadDataByDay() {
             if (isNaN(d)) return true;
             return d >= start && d <= end;
         });
-
         updateDateLabel();
         window.filterTable();
     });
@@ -129,7 +187,7 @@ window.goToday = function () {
     loadDataByDay();
 };
 
-// --- 9. MODAL HANDLING ---
+// --- 9. MODAL HANDLING (including logs modal) ---
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -204,9 +262,8 @@ window.jumpToRepairDateById = function (id) {
     if (r) window.jumpToRepairDate(r);
 };
 
-// --- 12. UPDATE STATUS (CYCLE pending → repairing → completed → cancelled) ---
+// --- 12. UPDATE STATUS (NO LOGGING) ---
 window.updateStatus = async function (id) {
-    // Find the repair in current data to know its current status
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
     if (!repair) {
         showToast("Repair not found", true);
@@ -225,12 +282,10 @@ window.updateStatus = async function (id) {
     }
 };
 
-// --- 13. EDIT REPAIR (with auto‑jump to correct day) ---
+// --- 13. EDIT REPAIR (with auto‑jump) ---
 window.editRepair = function (id) {
     const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
     if (!repair) return;
-
-    // Auto‑jump if the repair belongs to a different day
     if (repair.createdAt) {
         let d;
         if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
@@ -239,13 +294,10 @@ window.editRepair = function (id) {
             currentDate = d;
             clearSearchInput();
             loadDataByDay();
-            // Re‑trigger edit after data reloads
             setTimeout(() => window.editRepair(id), 500);
             return;
         }
     }
-
-    // Populate form
     currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
     document.getElementById('customerName').value = repair.customer || '';
@@ -256,7 +308,6 @@ window.editRepair = function (id) {
     document.getElementById('cost').value = repair.cost || 0;
     document.getElementById('paid').value = repair.paid || 0;
     document.getElementById('devicePassword').value = repair.password || '';
-
     currentImageData = repair.image || null;
     const previewImg = document.getElementById('previewImg');
     const previewDiv = document.getElementById('imagePreview');
@@ -287,9 +338,7 @@ window.filterTable = async function () {
     const rawQuery = document.getElementById('searchInput')?.value.trim() || "";
     const isSearching = rawQuery.length >= 2;
     const filterVal = document.getElementById('statusFilter')?.value || "all";
-
     let searchResults = [...repairs];
-
     if (isSearching) {
         try {
             const res = await algoliaIndex.search(rawQuery, { hitsPerPage: 200 });
@@ -298,34 +347,27 @@ window.filterTable = async function () {
             console.log("Algolia search error:", err);
         }
     }
-
     let data = searchResults.filter(r => {
         const cost = Number(r.cost) || 0;
         const paid = Number(r.paid) || 0;
         const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
         const isUnpaid = (cost > 0 && paid < cost);
-
         const matchesTab = isSearching ? true : (
             currentTab === 'all' ||
             (currentTab === 'pending' && r.status !== 'completed') ||
             (currentTab === 'fixed' && r.status === 'completed')
         );
-
         let matchesFilter = true;
         if (filterVal === 'paid') matchesFilter = isPaid;
         else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
         else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
-
         return matchesTab && matchesFilter;
     });
-
-    // Lock date navigation during search
     const dateNav = document.getElementById('dateLabel')?.parentElement;
     if (dateNav) {
         dateNav.style.opacity = isSearching ? "0.4" : "1";
         dateNav.style.pointerEvents = isSearching ? "none" : "auto";
     }
-
     displayedRepairs = data;
     renderTable(data);
 };
@@ -337,7 +379,6 @@ function renderTable(data = repairs) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (noData) noData.classList.toggle('hidden', data.length > 0);
-
     data.forEach(repair => {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
         const tr = document.createElement('tr');
@@ -357,20 +398,20 @@ function renderTable(data = repairs) {
             <td class="px-6 py-6">
                 <div class="text-xs font-bold text-slate-600">${repair.issue || ''}</div>
                 ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
-            </td>
+             </td>
             <td class="px-6 py-6">
                 <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status || 'pending'}</button>
-            </td>
+             </td>
             <td class="px-6 py-6">
                 <div class="text-[11px] font-bold text-slate-700">Total: रू${(Number(repair.cost) || 0).toLocaleString()}</div>
                 <div class="text-[11px] font-bold text-emerald-600">Paid: रू${(Number(repair.paid) || 0).toLocaleString()}</div>
                 <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
-            </td>
+             </td>
             <td class="px-8 py-6 text-right space-x-3">
                 <button onclick="event.stopPropagation(); editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
-            </td>
+             </td>
         `;
         tbody.appendChild(tr);
     });
@@ -383,7 +424,6 @@ function updateStats() {
     const fixed = repairs.filter(r => r.status === 'completed').length;
     const revenue = repairs.reduce((a, c) => a + (Number(c.paid) || 0), 0);
     const credit = repairs.reduce((a, c) => a + Math.max(0, (Number(c.cost) || 0) - (Number(c.paid) || 0)), 0);
-
     if (document.getElementById('stat-total')) document.getElementById('stat-total').textContent = repairs.length;
     if (document.getElementById('stat-active')) document.getElementById('stat-active').textContent = pending;
     if (document.getElementById('stat-fixed-count')) document.getElementById('stat-fixed-count').textContent = fixed;
@@ -402,7 +442,69 @@ function showToast(msg, isError = false) {
     }
 }
 
-// --- 19. FORM SUBMIT (CREATE / UPDATE) ---
+// --- 19. LOGS MODAL: FETCH AND DISPLAY LOGS ---
+window.showLogsModal = async function () {
+    const logsModal = document.getElementById('logsModal');
+    if (!logsModal) return;
+    const logsList = document.getElementById('logsList');
+    if (logsList) logsList.innerHTML = '<div class="p-4 text-center">Loading logs...</div>';
+    window.toggleModal('logsModal');
+    try {
+        const q = query(collection(db, "logs"), orderBy("timestamp", "desc"));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            if (logsList) logsList.innerHTML = '<div class="p-4 text-center text-slate-500">No logs found.</div>';
+            return;
+        }
+        let html = '<div class="divide-y divide-slate-100">';
+        snapshot.forEach(docSnap => {
+            const log = docSnap.data();
+            const date = new Date(log.timestamp).toLocaleString();
+            html += `
+                <div class="p-4 text-sm">
+                    <div class="font-bold text-slate-700">Repair: ${log.repairTitle || log.repairId}</div>
+                    <div class="text-slate-500">Field: <span class="font-mono">${log.field}</span> changed from <span class="text-red-500">${log.oldValue || "(empty)"}</span> → <span class="text-green-600">${log.newValue || "(empty)"}</span></div>
+                    <div class="text-xs text-slate-400">By: ${log.changedBy} at ${date}</div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        if (logsList) logsList.innerHTML = html;
+    } catch (err) {
+        console.error(err);
+        if (logsList) logsList.innerHTML = '<div class="p-4 text-center text-red-500">Failed to load logs.</div>';
+    }
+};
+
+// --- 20. LOGO DROPDOWN MENU ---
+function toggleLogoMenu() {
+    let menu = document.getElementById('logoDropdown');
+    if (!menu) {
+        const iconDiv = document.querySelector('.flex.items-center.gap-3');
+        if (!iconDiv) return;
+        menu = document.createElement('div');
+        menu.id = 'logoDropdown';
+        menu.className = 'absolute mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-200 z-50 hidden';
+        menu.innerHTML = `
+            <button onclick="showLogsModal(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-t-xl flex items-center gap-2">
+                <i class="fas fa-history text-slate-500"></i> 📜 View Logs
+            </button>
+            <button onclick="toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-b-xl flex items-center gap-2">
+                <i class="fas fa-times text-slate-500"></i> Close
+            </button>
+        `;
+        iconDiv.style.position = 'relative';
+        iconDiv.appendChild(menu);
+        // close when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!iconDiv.contains(e.target) && menu) menu.classList.add('hidden');
+        });
+    }
+    menu.classList.toggle('hidden');
+}
+window.toggleLogoMenu = toggleLogoMenu;
+
+// --- 21. FORM SUBMIT (CREATE / UPDATE) with logging & submit lock ---
 window.onload = () => {
     // Login handler
     const loginBtn = document.getElementById('loginBtn');
@@ -420,17 +522,44 @@ window.onload = () => {
         };
     }
 
-    // Save handler
+    // Attach logo click
+    const logoArea = document.querySelector('.flex.items-center.gap-3');
+    if (logoArea) {
+        logoArea.style.cursor = 'pointer';
+        logoArea.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleLogoMenu();
+        });
+    }
+
+    // ✨ NEW: Make the date label clickable to jump to today
+    const dateLabel = document.getElementById('dateLabel');
+    if (dateLabel) {
+        dateLabel.style.cursor = 'pointer';
+        dateLabel.addEventListener('click', () => {
+            window.goToday();
+        });
+    }
+
+    // Save handler with submit lock
     const form = document.getElementById('repairForm');
     if (!form) return;
 
+    let isSubmitting = false;
+
     form.onsubmit = async function (e) {
         e.preventDefault();
+
+        if (isSubmitting) {
+            console.log("⚠️ Already submitting, ignoring duplicate call");
+            return;
+        }
+        isSubmitting = true;
         showToast("Saving...");
 
-        let finalImageUrl = currentImageData;
         try {
-            // Upload image to ImgBB if it's a new base64 image
+            let finalImageUrl = currentImageData;
+
             if (currentImageData && currentImageData.startsWith('data:image')) {
                 const imgFormData = new FormData();
                 imgFormData.append("image", currentImageData.split(',')[1]);
@@ -444,19 +573,22 @@ window.onload = () => {
 
             let costVal = Number(document.getElementById('cost').value) || 0;
             let paidVal = Number(document.getElementById('paid').value) || 0;
-
-            // Auto-fix: if cost is 0 but paid > 0, set cost = paid (prevents negative due)
             if (costVal === 0 && paidVal > 0) costVal = paidVal;
 
             const isCompleted = paidVal > 0 && paidVal >= costVal;
+            const newPhone = document.getElementById('customerPhone').value;
+            const newCost = costVal;
+            const newPaid = paidVal;
+            const newCustomer = document.getElementById('customerName').value;
+
             const formData = {
-                customer: document.getElementById('customerName').value,
-                phone: document.getElementById('customerPhone').value,
+                customer: newCustomer,
+                phone: newPhone,
                 device: document.getElementById('deviceModel').value,
                 sn: document.getElementById('snNumber').value,
                 issue: document.getElementById('issueType').value,
-                cost: costVal,
-                paid: paidVal,
+                cost: newCost,
+                paid: newPaid,
                 image: finalImageUrl,
                 updatedAt: new Date().toISOString()
             };
@@ -464,7 +596,29 @@ window.onload = () => {
             if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
 
             if (currentlyEditingId) {
-                // UPDATE EXISTING
+                // --- UPDATE: log changes before save ---
+                const oldDocRef = doc(db, "repairs", currentlyEditingId);
+                const oldSnap = await getDoc(oldDocRef);
+                if (oldSnap.exists()) {
+                    const oldData = oldSnap.data();
+                    const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
+                    // check phone
+                    if (oldData.phone !== newPhone) {
+                        await logChange(currentlyEditingId, "phone", oldData.phone || "", newPhone, repairTitle);
+                        sendNotification("Phone changed", `Repair #${currentlyEditingId}: ${oldData.phone || "empty"} → ${newPhone}`);
+                    }
+                    // check cost
+                    if (Number(oldData.cost || 0) !== newCost) {
+                        await logChange(currentlyEditingId, "cost", oldData.cost || 0, newCost, repairTitle);
+                        sendNotification("Price changed", `Repair #${currentlyEditingId}: cost ${oldData.cost || 0} → ${newCost}`);
+                    }
+                    // check paid
+                    if (Number(oldData.paid || 0) !== newPaid) {
+                        await logChange(currentlyEditingId, "paid", oldData.paid || 0, newPaid, repairTitle);
+                        sendNotification("Payment changed", `Repair #${currentlyEditingId}: paid ${oldData.paid || 0} → ${newPaid}`);
+                    }
+                }
+
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
                 await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
@@ -478,7 +632,7 @@ window.onload = () => {
                         const nepDate = new NepaliDate(now);
                         finalDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
                     }
-                } catch (e) { /* fallback to English date */ }
+                } catch (e) { /* fallback */ }
 
                 const newEntry = {
                     ...formData,
@@ -491,18 +645,19 @@ window.onload = () => {
                 showToast("Repair added");
             }
 
-            // Reset and close modal
             window.toggleModal('entryModal');
             currentlyEditingId = null;
             currentImageData = null;
         } catch (err) {
             console.error("Save Error:", err);
             alert("Error: " + err.message);
+        } finally {
+            isSubmitting = false;
         }
     };
 };
 
-// --- 20. SYNC ALL TO ALGOLIA (UTILITY, NOT USED AUTOMATICALLY) ---
+// --- 22. SYNC ALL TO ALGOLIA (UTILITY) ---
 window.syncAllToAlgolia = async function () {
     console.log("🔥 Syncing ALL Firebase data to Algolia...");
     const snapshot = await getDocs(collection(db, "repairs"));

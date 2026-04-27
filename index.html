@@ -166,6 +166,19 @@
     <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 translate-y-20 opacity-0 transition-all pointer-events-none z-[100]">
         <div class="bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl text-sm font-semibold" id="toastMessage"></div>
     </div>
+    <!-- Logs Modal -->
+<div id="logsModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-5">
+    <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onclick="toggleModal('logsModal')"></div>
+    <div class="bg-white w-full max-w-2xl rounded-[2rem] relative z-10 overflow-hidden max-h-[90vh] flex flex-col">
+        <div class="bg-indigo-600 p-6 text-white flex justify-between items-center">
+            <h2 class="text-xl font-bold">Change Logs</h2>
+            <button onclick="toggleModal('logsModal')"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="logsList" class="overflow-y-auto p-2">
+            <!-- Logs will be injected here -->
+        </div>
+    </div>
+</div>
 
     <script type="module" src="app.js" defer></script>
 </body>
