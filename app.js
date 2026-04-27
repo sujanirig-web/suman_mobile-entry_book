@@ -1,4 +1,4 @@
-// --- 1. FIREBASE IMPORTS ---
+// 1. FIREBASE and algolia IMPORTS 
 import algoliasearch from 'https://cdn.jsdelivr.net/npm/algoliasearch@4.22.1/dist/algoliasearch.esm.browser.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
@@ -22,7 +22,7 @@ const algoliaClient = algoliasearch(
 );
 const algoliaIndex = algoliaClient.initIndex("repairs");
 
-// --- 2. GLOBAL STATE ---
+//  2. GLOBAL STATE 
 let displayedRepairs = [];
 let repairs = [];
 let currentTab = 'all';
@@ -31,26 +31,29 @@ let currentImageData = null;
 let currentlyEditingId = null;
 let unsubscribe = null;
 
-// --- Deduplication map for logs (prevents duplicate entries) ---
+//  Deduplication map for logs 
 const lastLogDetails = new Map();
 
-// --- Request notification permission on load ---
+// Request notification permission on load 
 if ("Notification" in window) {
     Notification.requestPermission();
 }
 
-// --- Helper: Send system notification + toast ---
 function sendNotification(title, body) {
     showToast(body);
-    if (Notification.permission === "granted") {
-        new Notification(title, { body });
+    try {
+        if (window.Notification && Notification.permission === "granted") {
+            new Notification(title, { body });
+        }
+    } catch(e) {
+        console.warn("Notifications not supported", e);
     }
 }
 
-// --- Helper: Log a change to Firestore (with deduplication) ---
 // --- Deduplication map with timestamps ---
 const pendingLogs = new Map(); // key → timestamp
 
+ // logchange 
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     const oldStr = String(oldValue);
     const newStr = String(newValue);
@@ -92,7 +95,7 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     }, 10000);
 }
 
-// --- 3. AUTH GATEKEEPER ---
+//  3. AUTH GATEKEEPER 
 onAuthStateChanged(auth, (user) => {
     const overlay = document.getElementById('loginOverlay');
     if (overlay) {
@@ -107,7 +110,7 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// --- 4. HELPER: GET DAY RANGE ---
+//  4. HELPER: GET DAY RANGE 
 function getDayRange(date) {
     const start = new Date(date);
     start.setHours(0, 0, 0, 0);
@@ -116,7 +119,7 @@ function getDayRange(date) {
     return { start, end };
 }
 
-// --- 5. LOAD DATA FOR CURRENT DAY (REAL‑TIME) ---
+//  5. LOAD DATA FOR CURRENT DAY (REAL‑TIME) 
 function loadDataByDay() {
     if (unsubscribe) unsubscribe();
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
@@ -137,7 +140,7 @@ function loadDataByDay() {
     });
 }
 
-// --- 6. UPDATE DATE LABEL (NEPALI / ENGLISH) ---
+//  6. UPDATE DATE LABEL (NEPALI / ENGLISH) 
 function updateDateLabel() {
     const label = document.getElementById('dateLabel');
     if (!label) return;
@@ -596,7 +599,7 @@ window.onload = () => {
             if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
 
             if (currentlyEditingId) {
-                // --- UPDATE: log changes before save ---
+                //  UPDATE: log changes before save 
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
                 if (oldSnap.exists()) {
@@ -657,7 +660,7 @@ window.onload = () => {
     };
 };
 
-// --- 22. SYNC ALL TO ALGOLIA (UTILITY) ---
+//  22. SYNC ALL TO ALGOLIA (UTILITY) 
 window.syncAllToAlgolia = async function () {
     console.log("🔥 Syncing ALL Firebase data to Algolia...");
     const snapshot = await getDocs(collection(db, "repairs"));
