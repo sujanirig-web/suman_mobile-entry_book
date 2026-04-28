@@ -22,7 +22,7 @@ const algoliaClient = algoliasearch(
 );
 const algoliaIndex = algoliaClient.initIndex("repairs");
 
-//  2. GLOBAL STATE 
+// 2. GLOBAL STATE 
 let displayedRepairs = [];
 let repairs = [];
 let currentTab = 'all';
@@ -30,8 +30,9 @@ let currentDate = new Date();
 let currentImageData = null;
 let currentlyEditingId = null;
 let unsubscribe = null;
+let currentSearchQuery = "";
+let searchDebounceTimer = null;
 
-// Request notification permission on load 
 if ("Notification" in window) {
     Notification.requestPermission();
 }
@@ -47,26 +48,21 @@ function sendNotification(title, body) {
     }
 }
 
-// --- Helper: instantly update search results in memory after edit ---
 function updateSearchResultLocally(updatedRepair) {
-    // Update displayedRepairs (search results)
     const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
     if (index !== -1) {
         displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
         renderTable(displayedRepairs);
         console.log("✅ Search result updated instantly");
     }
-    // Also update the main repairs array if this repair belongs to current day
     const repairIndex = repairs.findIndex(r => r.id === updatedRepair.id);
     if (repairIndex !== -1) {
         repairs[repairIndex] = { ...repairs[repairIndex], ...updatedRepair };
     }
 }
 
-// --- Deduplication map with timestamps ---
 const pendingLogs = new Map();
 
- // logchange 
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     const oldStr = String(oldValue);
     const newStr = String(newValue);
@@ -104,7 +100,6 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     }, 10000);
 }
 
-//  3. AUTH GATEKEEPER 
 onAuthStateChanged(auth, (user) => {
     const overlay = document.getElementById('loginOverlay');
     if (overlay) {
@@ -114,12 +109,12 @@ onAuthStateChanged(auth, (user) => {
         } else {
             overlay.style.display = 'flex';
             repairs = [];
+            displayedRepairs = [];
             if (typeof window.filterTable === 'function') window.filterTable();
         }
     }
 });
 
-//  4. HELPER: GET DAY RANGE 
 function getDayRange(date) {
     const start = new Date(date);
     start.setHours(0, 0, 0, 0);
@@ -128,14 +123,13 @@ function getDayRange(date) {
     return { start, end };
 }
 
-//  5. LOAD DATA FOR CURRENT DAY (REAL‑TIME) 
 function loadDataByDay() {
     if (unsubscribe) unsubscribe();
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         const { start, end } = getDayRange(currentDate);
-        repairs = allData.filter(r => {
+        const newRepairs = allData.filter(r => {
             if (!r.createdAt) return true;
             let d;
             if (typeof r.createdAt === "string") d = new Date(r.createdAt);
@@ -144,12 +138,61 @@ function loadDataByDay() {
             if (isNaN(d)) return true;
             return d >= start && d <= end;
         });
+        
+        repairs = newRepairs;
         updateDateLabel();
-        window.filterTable();
+
+        const isSearching = currentSearchQuery.length >= 2;
+        if (isSearching) {
+            snapshot.docChanges().forEach(change => {
+                const changedRepair = { ...change.doc.data(), id: change.doc.id };
+                if (change.type === 'added' || change.type === 'modified') {
+                    const idx = displayedRepairs.findIndex(r => r.id === changedRepair.id);
+                    if (idx !== -1) {
+                        displayedRepairs[idx] = { ...displayedRepairs[idx], ...changedRepair };
+                    } else if (change.type === 'added') {
+                        if (matchesCurrentFilters(changedRepair)) {
+                            displayedRepairs.unshift(changedRepair);
+                        }
+                    }
+                } else if (change.type === 'removed') {
+                    const idx = displayedRepairs.findIndex(r => r.id === changedRepair.id);
+                    if (idx !== -1) displayedRepairs.splice(idx, 1);
+                }
+            });
+            displayedRepairs = displayedRepairs.filter(r => matchesCurrentFilters(r));
+            renderTable(displayedRepairs);
+        } else {
+            window.filterTable();
+        }
+        updateStats();
     });
 }
 
-//  6. UPDATE DATE LABEL (NEPALI / ENGLISH) 
+function matchesCurrentFilters(repair) {
+    const filterVal = document.getElementById('statusFilter')?.value || "all";
+    const cost = Number(repair.cost) || 0;
+    const paid = Number(repair.paid) || 0;
+    const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+    const isUnpaid = (cost > 0 && paid < cost);
+    
+    let matchesTab = (currentTab === 'all' ||
+                      (currentTab === 'pending' && repair.status !== 'completed') ||
+                      (currentTab === 'fixed' && repair.status === 'completed'));
+    
+    let matchesFilter = true;
+    if (filterVal === 'paid') matchesFilter = isPaid;
+    else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+    else if (filterVal !== 'all') matchesFilter = repair.status === filterVal;
+    
+    let matchesText = true;
+    if (currentSearchQuery.length >= 2) {
+        const text = `${repair.customer||''} ${repair.device||''} ${repair.sn||''} ${repair.phone||''}`.toLowerCase();
+        matchesText = text.includes(currentSearchQuery.toLowerCase());
+    }
+    return matchesTab && matchesFilter && matchesText;
+}
+
 function updateDateLabel() {
     const label = document.getElementById('dateLabel');
     if (!label) return;
@@ -165,7 +208,6 @@ function updateDateLabel() {
     }
 }
 
-// --- 7. TAB SWITCHING ---
 function setTab(tab) {
     currentTab = tab;
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
@@ -175,10 +217,13 @@ function setTab(tab) {
 }
 window.setTab = setTab;
 
-// --- 8. DATE NAVIGATION (with search reset) ---
 function clearSearchInput() {
     const searchInput = document.getElementById('searchInput');
-    if (searchInput) searchInput.value = '';
+    if (searchInput) {
+        searchInput.value = '';
+        currentSearchQuery = '';
+        window.filterTable();
+    }
 }
 
 window.nextDay = function () {
@@ -199,7 +244,6 @@ window.goToday = function () {
     loadDataByDay();
 };
 
-// --- 9. MODAL HANDLING (including logs modal) ---
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -223,7 +267,6 @@ window.toggleModal = function (id) {
     }
 };
 
-// --- 10. IMAGE UPLOAD & PREVIEW ---
 window.handleImageUpload = function (input) {
     const file = input.files[0];
     if (file) {
@@ -256,7 +299,6 @@ window.viewImage = function (src) {
     if (modal) modal.classList.remove('hidden');
 };
 
-// --- 11. JUMP TO DATE OF A REPAIR ---
 window.jumpToRepairDate = function (repair) {
     if (!repair.createdAt) return;
     let d;
@@ -274,7 +316,6 @@ window.jumpToRepairDateById = function (id) {
     if (r) window.jumpToRepairDate(r);
 };
 
-// --- 12. UPDATE STATUS (NO LOGGING) ---
 window.updateStatus = async function (id) {
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
     if (!repair) {
@@ -288,8 +329,6 @@ window.updateStatus = async function (id) {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
         await algoliaIndex.partialUpdateObject({ objectID: id, status: nextStatus });
         showToast(`Status changed to ${nextStatus}`);
-        
-        // Instant local update for search results
         const updatedRepair = { ...repair, status: nextStatus };
         updateSearchResultLocally(updatedRepair);
     } catch (err) {
@@ -298,30 +337,10 @@ window.updateStatus = async function (id) {
     }
 };
 
-// --- 13. EDIT REPAIR (with SMART behaviour: stay in search if active) ---
 window.editRepair = function (id) {
     const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
     if (!repair) return;
 
-    // Check if search is active
-    const searchInput = document.getElementById('searchInput');
-    const isSearchActive = searchInput && searchInput.value.trim().length >= 2;
-
-    // Only auto-jump if NOT searching
-    if (!isSearchActive && repair.createdAt) {
-        let d;
-        if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
-        else if (repair.createdAt.seconds) d = new Date(repair.createdAt.seconds * 1000);
-        if (d && !isNaN(d) && d.toDateString() !== currentDate.toDateString()) {
-            currentDate = d;
-            clearSearchInput();
-            loadDataByDay();
-            setTimeout(() => window.editRepair(id), 500);
-            return;
-        }
-    }
-
-    // Populate form
     currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
     document.getElementById('customerName').value = repair.customer || '';
@@ -344,21 +363,17 @@ window.editRepair = function (id) {
     window.toggleModal('entryModal');
 };
 
-// --- 14. DELETE REPAIR ---
 window.deleteRepair = async function (id) {
     if (!confirm("Delete this entry?")) return;
     try {
         await deleteDoc(doc(db, "repairs", id));
         await algoliaIndex.deleteObject(id);
         showToast("Deleted successfully");
-        
-        // Remove from local search results instantly
         const index = displayedRepairs.findIndex(r => r.id === id);
         if (index !== -1) {
             displayedRepairs.splice(index, 1);
             renderTable(displayedRepairs);
         }
-        // Also remove from repairs array if present
         const repairIndex = repairs.findIndex(r => r.id === id);
         if (repairIndex !== -1) {
             repairs.splice(repairIndex, 1);
@@ -369,46 +384,63 @@ window.deleteRepair = async function (id) {
     }
 };
 
-// --- 15. FILTER & SEARCH (Algolia + local) ---
-window.filterTable = async function () {
-    const rawQuery = document.getElementById('searchInput')?.value.trim() || "";
-    const isSearching = rawQuery.length >= 2;
-    const filterVal = document.getElementById('statusFilter')?.value || "all";
-    let searchResults = [...repairs];
-    if (isSearching) {
-        try {
-            const res = await algoliaIndex.search(rawQuery, { hitsPerPage: 200 });
-            searchResults = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
-        } catch (err) {
-            console.log("Algolia search error:", err);
-        }
+window.filterTable = function() {
+    if (currentSearchQuery.length >= 2) {
+        performSearch(currentSearchQuery);
+    } else {
+        let data = [...repairs];
+        const filterVal = document.getElementById('statusFilter')?.value || "all";
+        data = data.filter(r => {
+            const cost = Number(r.cost) || 0;
+            const paid = Number(r.paid) || 0;
+            const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+            const isUnpaid = (cost > 0 && paid < cost);
+            const matchesTab = (currentTab === 'all' ||
+                                (currentTab === 'pending' && r.status !== 'completed') ||
+                                (currentTab === 'fixed' && r.status === 'completed'));
+            let matchesFilter = true;
+            if (filterVal === 'paid') matchesFilter = isPaid;
+            else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+            else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
+            return matchesTab && matchesFilter;
+        });
+        displayedRepairs = data;
+        renderTable(displayedRepairs);
     }
-    let data = searchResults.filter(r => {
-        const cost = Number(r.cost) || 0;
-        const paid = Number(r.paid) || 0;
-        const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
-        const isUnpaid = (cost > 0 && paid < cost);
-        const matchesTab = isSearching ? true : (
-            currentTab === 'all' ||
-            (currentTab === 'pending' && r.status !== 'completed') ||
-            (currentTab === 'fixed' && r.status === 'completed')
-        );
-        let matchesFilter = true;
-        if (filterVal === 'paid') matchesFilter = isPaid;
-        else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
-        else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
-        return matchesTab && matchesFilter;
-    });
-    const dateNav = document.getElementById('dateLabel')?.parentElement;
-    if (dateNav) {
-        dateNav.style.opacity = isSearching ? "0.4" : "1";
-        dateNav.style.pointerEvents = isSearching ? "none" : "auto";
-    }
-    displayedRepairs = data;
-    renderTable(data);
 };
 
-// --- 16. RENDER TABLE ---
+async function performSearch(query) {
+    currentSearchQuery = query;
+    const isSearching = query.length >= 2;
+    
+    if (!isSearching) {
+        window.filterTable();
+        return;
+    }
+    
+    try {
+        const res = await algoliaIndex.search(query, { hitsPerPage: 200 });
+        let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
+        hits = hits.filter(r => matchesCurrentFilters(r));
+        displayedRepairs = hits;
+        renderTable(displayedRepairs);
+    } catch (err) {
+        console.log("Algolia search error:", err);
+        displayedRepairs = [];
+        renderTable(displayedRepairs);
+    }
+}
+
+function onSearchInput() {
+    const input = document.getElementById('searchInput');
+    if (!input) return;
+    const query = input.value.trim();
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+        performSearch(query);
+    }, 300);
+}
+
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
     const noData = document.getElementById('noDataMessage');
@@ -434,27 +466,26 @@ function renderTable(data = repairs) {
             <td class="px-6 py-6">
                 <div class="text-xs font-bold text-slate-600">${repair.issue || ''}</div>
                 ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
-             </td>
+              </td>
             <td class="px-6 py-6">
                 <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-orange-50 text-orange-600'}">${repair.status || 'pending'}</button>
-             </td>
+              </td>
             <td class="px-6 py-6">
                 <div class="text-[11px] font-bold text-slate-700">Total: रू${(Number(repair.cost) || 0).toLocaleString()}</div>
                 <div class="text-[11px] font-bold text-emerald-600">Paid: रू${(Number(repair.paid) || 0).toLocaleString()}</div>
                 <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
-             </td>
+              </td>
             <td class="px-8 py-6 text-right space-x-3">
                 <button onclick="event.stopPropagation(); editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
-             </td>
+              </td>
         `;
         tbody.appendChild(tr);
     });
     updateStats();
 }
 
-// --- 17. UPDATE STATS CARDS ---
 function updateStats() {
     const pending = repairs.filter(r => r.status === 'pending' || r.status === 'repairing').length;
     const fixed = repairs.filter(r => r.status === 'completed').length;
@@ -467,7 +498,6 @@ function updateStats() {
     if (document.getElementById('stat-credit')) document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
 }
 
-// --- 18. TOAST NOTIFICATION ---
 function showToast(msg, isError = false) {
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toastMessage');
@@ -478,7 +508,6 @@ function showToast(msg, isError = false) {
     }
 }
 
-// --- 19. LOGS MODAL: FETCH AND DISPLAY LOGS ---
 window.showLogsModal = async function () {
     const logsModal = document.getElementById('logsModal');
     if (!logsModal) return;
@@ -512,7 +541,6 @@ window.showLogsModal = async function () {
     }
 };
 
-// --- 20. LOGO DROPDOWN MENU ---
 function toggleLogoMenu() {
     let menu = document.getElementById('logoDropdown');
     if (!menu) {
@@ -539,7 +567,6 @@ function toggleLogoMenu() {
 }
 window.toggleLogoMenu = toggleLogoMenu;
 
-// --- 21. FORM SUBMIT (CREATE / UPDATE) with logging & instant local update ---
 window.onload = () => {
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
@@ -573,6 +600,18 @@ window.onload = () => {
         });
     }
 
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', onSearchInput);
+    }
+
+    const statusFilter = document.getElementById('statusFilter');
+    if (statusFilter) {
+        statusFilter.addEventListener('change', () => {
+            window.filterTable();
+        });
+    }
+
     const form = document.getElementById('repairForm');
     if (!form) return;
 
@@ -580,17 +619,12 @@ window.onload = () => {
 
     form.onsubmit = async function (e) {
         e.preventDefault();
-
-        if (isSubmitting) {
-            console.log("⚠️ Already submitting, ignoring duplicate call");
-            return;
-        }
+        if (isSubmitting) return;
         isSubmitting = true;
         showToast("Saving...");
 
         try {
             let finalImageUrl = currentImageData;
-
             if (currentImageData && currentImageData.startsWith('data:image')) {
                 const imgFormData = new FormData();
                 imgFormData.append("image", currentImageData.split(',')[1]);
@@ -646,7 +680,6 @@ window.onload = () => {
                         sendNotification("Payment changed", `Repair #${currentlyEditingId}: paid ${oldData.paid || 0} → ${newPaid}`);
                     }
 
-                    // Build updated repair object for instant UI update
                     updatedRepair = {
                         ...oldData,
                         ...formData,
@@ -660,12 +693,10 @@ window.onload = () => {
                 await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
                 showToast("Updated successfully");
 
-                // Instant local update for search results
                 if (updatedRepair) {
                     updateSearchResultLocally(updatedRepair);
                 }
             } else {
-                // CREATE NEW
                 const now = new Date();
                 let finalDate = now.toLocaleDateString();
                 try {
@@ -673,7 +704,7 @@ window.onload = () => {
                         const nepDate = new NepaliDate(now);
                         finalDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
                     }
-                } catch (e) { /* fallback */ }
+                } catch (e) {}
 
                 const newEntry = {
                     ...formData,
@@ -698,7 +729,6 @@ window.onload = () => {
     };
 };
 
-//  22. SYNC ALL TO ALGOLIA (UTILITY) 
 window.syncAllToAlgolia = async function () {
     console.log("🔥 Syncing ALL Firebase data to Algolia...");
     const snapshot = await getDocs(collection(db, "repairs"));
