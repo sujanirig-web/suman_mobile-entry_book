@@ -31,9 +31,6 @@ let currentImageData = null;
 let currentlyEditingId = null;
 let unsubscribe = null;
 
-//  Deduplication map for logs 
-const lastLogDetails = new Map();
-
 // Request notification permission on load 
 if ("Notification" in window) {
     Notification.requestPermission();
@@ -50,8 +47,24 @@ function sendNotification(title, body) {
     }
 }
 
+// --- Helper: instantly update search results in memory after edit ---
+function updateSearchResultLocally(updatedRepair) {
+    // Update displayedRepairs (search results)
+    const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
+    if (index !== -1) {
+        displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
+        renderTable(displayedRepairs);
+        console.log("✅ Search result updated instantly");
+    }
+    // Also update the main repairs array if this repair belongs to current day
+    const repairIndex = repairs.findIndex(r => r.id === updatedRepair.id);
+    if (repairIndex !== -1) {
+        repairs[repairIndex] = { ...repairs[repairIndex], ...updatedRepair };
+    }
+}
+
 // --- Deduplication map with timestamps ---
-const pendingLogs = new Map(); // key → timestamp
+const pendingLogs = new Map();
 
  // logchange 
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
@@ -59,15 +72,13 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     const newStr = String(newValue);
     const key = `${repairId}|${field}|${oldStr}|${newStr}`;
 
-    // Check if this exact change is already in progress or was recently written
     const lastTime = pendingLogs.get(key);
     const now = Date.now();
-    if (lastTime && (now - lastTime) < 10000) { // 10 seconds window
-        console.warn(`⚠️ Duplicate log blocked for key: ${key} (${(now - lastTime)}ms since last)`);
+    if (lastTime && (now - lastTime) < 10000) {
+        console.warn(`⚠️ Duplicate log blocked for key: ${key}`);
         return;
     }
 
-    // Lock this key
     pendingLogs.set(key, now);
     console.log(`📝 Attempting to log: ${key}`);
 
@@ -86,10 +97,8 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
         console.log(`✅ Log written: ${key}`);
     } catch (err) {
         console.error("Failed to write log:", err);
-        // Remove lock on error so user can retry
         pendingLogs.delete(key);
     }
-    // Note: lock stays for 10 seconds to prevent any duplicate from same save
     setTimeout(() => {
         pendingLogs.delete(key);
     }, 10000);
@@ -279,17 +288,27 @@ window.updateStatus = async function (id) {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
         await algoliaIndex.partialUpdateObject({ objectID: id, status: nextStatus });
         showToast(`Status changed to ${nextStatus}`);
+        
+        // Instant local update for search results
+        const updatedRepair = { ...repair, status: nextStatus };
+        updateSearchResultLocally(updatedRepair);
     } catch (err) {
         console.error(err);
         alert("Failed to update status");
     }
 };
 
-// --- 13. EDIT REPAIR (with auto‑jump) ---
+// --- 13. EDIT REPAIR (with SMART behaviour: stay in search if active) ---
 window.editRepair = function (id) {
     const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
     if (!repair) return;
-    if (repair.createdAt) {
+
+    // Check if search is active
+    const searchInput = document.getElementById('searchInput');
+    const isSearchActive = searchInput && searchInput.value.trim().length >= 2;
+
+    // Only auto-jump if NOT searching
+    if (!isSearchActive && repair.createdAt) {
         let d;
         if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
         else if (repair.createdAt.seconds) d = new Date(repair.createdAt.seconds * 1000);
@@ -301,6 +320,8 @@ window.editRepair = function (id) {
             return;
         }
     }
+
+    // Populate form
     currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
     document.getElementById('customerName').value = repair.customer || '';
@@ -330,6 +351,18 @@ window.deleteRepair = async function (id) {
         await deleteDoc(doc(db, "repairs", id));
         await algoliaIndex.deleteObject(id);
         showToast("Deleted successfully");
+        
+        // Remove from local search results instantly
+        const index = displayedRepairs.findIndex(r => r.id === id);
+        if (index !== -1) {
+            displayedRepairs.splice(index, 1);
+            renderTable(displayedRepairs);
+        }
+        // Also remove from repairs array if present
+        const repairIndex = repairs.findIndex(r => r.id === id);
+        if (repairIndex !== -1) {
+            repairs.splice(repairIndex, 1);
+        }
     } catch (err) {
         console.error(err);
         alert("Delete failed");
@@ -498,7 +531,6 @@ function toggleLogoMenu() {
         `;
         iconDiv.style.position = 'relative';
         iconDiv.appendChild(menu);
-        // close when clicking outside
         document.addEventListener('click', function(e) {
             if (!iconDiv.contains(e.target) && menu) menu.classList.add('hidden');
         });
@@ -507,9 +539,8 @@ function toggleLogoMenu() {
 }
 window.toggleLogoMenu = toggleLogoMenu;
 
-// --- 21. FORM SUBMIT (CREATE / UPDATE) with logging & submit lock ---
+// --- 21. FORM SUBMIT (CREATE / UPDATE) with logging & instant local update ---
 window.onload = () => {
-    // Login handler
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
         loginBtn.onclick = async () => {
@@ -525,7 +556,6 @@ window.onload = () => {
         };
     }
 
-    // Attach logo click
     const logoArea = document.querySelector('.flex.items-center.gap-3');
     if (logoArea) {
         logoArea.style.cursor = 'pointer';
@@ -535,7 +565,6 @@ window.onload = () => {
         });
     }
 
-    // ✨ NEW: Make the date label clickable to jump to today
     const dateLabel = document.getElementById('dateLabel');
     if (dateLabel) {
         dateLabel.style.cursor = 'pointer';
@@ -544,7 +573,6 @@ window.onload = () => {
         });
     }
 
-    // Save handler with submit lock
     const form = document.getElementById('repairForm');
     if (!form) return;
 
@@ -599,33 +627,43 @@ window.onload = () => {
             if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
 
             if (currentlyEditingId) {
-                //  UPDATE: log changes before save 
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
+                let updatedRepair = null;
                 if (oldSnap.exists()) {
                     const oldData = oldSnap.data();
                     const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
-                    // check phone
                     if (oldData.phone !== newPhone) {
                         await logChange(currentlyEditingId, "phone", oldData.phone || "", newPhone, repairTitle);
                         sendNotification("Phone changed", `Repair #${currentlyEditingId}: ${oldData.phone || "empty"} → ${newPhone}`);
                     }
-                    // check cost
                     if (Number(oldData.cost || 0) !== newCost) {
                         await logChange(currentlyEditingId, "cost", oldData.cost || 0, newCost, repairTitle);
                         sendNotification("Price changed", `Repair #${currentlyEditingId}: cost ${oldData.cost || 0} → ${newCost}`);
                     }
-                    // check paid
                     if (Number(oldData.paid || 0) !== newPaid) {
                         await logChange(currentlyEditingId, "paid", oldData.paid || 0, newPaid, repairTitle);
                         sendNotification("Payment changed", `Repair #${currentlyEditingId}: paid ${oldData.paid || 0} → ${newPaid}`);
                     }
+
+                    // Build updated repair object for instant UI update
+                    updatedRepair = {
+                        ...oldData,
+                        ...formData,
+                        status: isCompleted ? 'completed' : 'pending',
+                        id: currentlyEditingId
+                    };
                 }
 
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
                 await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
                 showToast("Updated successfully");
+
+                // Instant local update for search results
+                if (updatedRepair) {
+                    updateSearchResultLocally(updatedRepair);
+                }
             } else {
                 // CREATE NEW
                 const now = new Date();
