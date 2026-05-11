@@ -22,6 +22,26 @@ const algoliaClient = algoliasearch(
 );
 const algoliaIndex = algoliaClient.initIndex("repairs");
 
+// ========== Update index settings ==========
+(async function configureAlgolia() {
+    try {
+        await algoliaIndex.setSettings({
+            searchableAttributes: ['date', 'customer', 'device', 'sn', 'phone', 'issue'],
+            attributesToHighlight: ['date', 'customer', 'device', 'sn', 'phone'],
+            customRanking: ['desc(paid)'],
+            typoTolerance: true,
+            removeStopWords: true,
+            ignorePlurals: true,
+            advancedSyntax: true,
+            exactOnSingleWordQuery: 'attribute',
+            ranking: ['typo', 'geo', 'words', 'filters', 'proximity', 'attribute', 'exact', 'custom']
+        });
+        console.log("✅ Algolia index settings updated");
+    } catch (e) {
+        console.warn("Could not update Algolia settings:", e);
+    }
+})();
+
 // GLOBAL STATE 
 let displayedRepairs = [];
 let repairs = [];
@@ -37,7 +57,15 @@ let unsubscribe = null;
 let currentSearchQuery = "";
 let searchDebounceTimer = null;
 
-// ========== Censorship for Revenue and Due ==========
+// ========== Pagination ==========
+let currentPage = 1;
+const itemsPerPage = 50;
+let totalFilteredItems = 0;
+let fullFilteredList = [];
+let isSearchActive = false;
+let searchFilteredList = [];
+
+// ========== Censorship ==========
 let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
@@ -45,103 +73,63 @@ let dueTimer = null;
 
 function censorRevenue() {
     const revenueEl = document.getElementById('stat-revenue');
-    if (revenueEl) {
-        revenueEl.classList.add('blur-strong');
-    }
+    if (revenueEl) revenueEl.classList.add('blur-strong');
     revenueCensored = true;
     if (revenueTimer) clearTimeout(revenueTimer);
 }
-
 function censorDue() {
     const dueEl = document.getElementById('stat-credit');
-    if (dueEl) {
-        dueEl.classList.add('blur-strong');
-    }
+    if (dueEl) dueEl.classList.add('blur-strong');
     dueCensored = true;
     if (dueTimer) clearTimeout(dueTimer);
 }
-
 function uncensorRevenue() {
     const revenueEl = document.getElementById('stat-revenue');
-    if (revenueEl) {
-        revenueEl.classList.remove('blur-strong');
-    }
+    if (revenueEl) revenueEl.classList.remove('blur-strong');
     revenueCensored = false;
     if (revenueTimer) clearTimeout(revenueTimer);
-    revenueTimer = setTimeout(() => {
-        censorRevenue();
-    }, 1000);
+    revenueTimer = setTimeout(() => censorRevenue(), 1000);
 }
-
 function uncensorDue() {
     const dueEl = document.getElementById('stat-credit');
-    if (dueEl) {
-        dueEl.classList.remove('blur-strong');
-    }
+    if (dueEl) dueEl.classList.remove('blur-strong');
     dueCensored = false;
     if (dueTimer) clearTimeout(dueTimer);
-    dueTimer = setTimeout(() => {
-        censorDue();
-    }, 1000);
+    dueTimer = setTimeout(() => censorDue(), 1000);
 }
-
 window.toggleRevenueCensor = function() {
-    if (revenueCensored) {
-        uncensorRevenue();
-    } else {
-        // If already uncensored and tapped again, restart the 5s timer
+    if (revenueCensored) uncensorRevenue();
+    else {
         if (revenueTimer) clearTimeout(revenueTimer);
-        revenueTimer = setTimeout(() => {
-            censorRevenue();
-        }, 1000);
+        revenueTimer = setTimeout(() => censorRevenue(), 1000);
     }
 };
-
 window.toggleDueCensor = function() {
-    if (dueCensored) {
-        uncensorDue();
-    } else {
+    if (dueCensored) uncensorDue();
+    else {
         if (dueTimer) clearTimeout(dueTimer);
-        dueTimer = setTimeout(() => {
-            censorDue();
-        }, 1000);
+        dueTimer = setTimeout(() => censorDue(), 1000);
     }
 };
 
-// Pagination
-let currentPage = 1;
-const itemsPerPage = 50;
-let totalFilteredForMonth = 0;
+if ("Notification" in window) Notification.requestPermission();
 
-if ("Notification" in window) {
-    Notification.requestPermission();
-}
-
-// ========== HELPER: Smart sort by SN (DESCENDING: largest SN first) ==========
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
-        const snA = a.sn || '';
-        const snB = b.sn || '';
-        // Extract numeric prefix
-        const numA = parseInt(snA, 10);
-        const numB = parseInt(snB, 10);
-        if (!isNaN(numA) && !isNaN(numB)) {
-            return numB - numA; // descending numeric
-        }
-        if (!isNaN(numA)) return -1; // numbers before non-numbers
+        const snA = a.sn || '', snB = b.sn || '';
+        const numA = parseInt(snA, 10), numB = parseInt(snB, 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numB - numA;
+        if (!isNaN(numA)) return -1;
         if (!isNaN(numB)) return 1;
-        return snB.localeCompare(snA); // descending string compare
+        return snB.localeCompare(snA);
     });
 }
 
 function adToBsYearMonth(adDate) {
     try {
-        if (typeof window.NepaliDate !== 'function') {
-            return { year: 2080, month: 1 };
-        }
+        if (typeof window.NepaliDate !== 'function') return { year: 2080, month: 1 };
         const nepDate = new NepaliDate(adDate);
-        let year = nepDate.getYear();
-        let month = nepDate.getMonth();
+        let year = nepDate.getYear(), month = nepDate.getMonth();
         if (isNaN(year)) year = 2080;
         if (isNaN(month)) month = 1;
         return { year, month };
@@ -153,33 +141,27 @@ function adToBsYearMonth(adDate) {
 function sendNotification(title, body) {
     showToast(body);
     try {
-        if (window.Notification && Notification.permission === "granted") {
-            new Notification(title, { body });
-        }
+        if (window.Notification && Notification.permission === "granted") new Notification(title, { body });
     } catch(e) {}
 }
 
 function updateSearchResultLocally(updatedRepair) {
     const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (index !== -1) {
-        displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
-        renderTable(displayedRepairs);
-    }
+    if (index !== -1) displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
     const repairIndex = repairs.findIndex(r => r.id === updatedRepair.id);
-    if (repairIndex !== -1) {
-        repairs[repairIndex] = { ...repairs[repairIndex], ...updatedRepair };
-    }
+    if (repairIndex !== -1) repairs[repairIndex] = { ...repairs[repairIndex], ...updatedRepair };
     const monthIndex = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (monthIndex !== -1) {
-        fullMonthRepairs[monthIndex] = { ...fullMonthRepairs[monthIndex], ...updatedRepair };
-    }
+    if (monthIndex !== -1) fullMonthRepairs[monthIndex] = { ...fullMonthRepairs[monthIndex], ...updatedRepair };
+    const filteredIndex = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (filteredIndex !== -1) fullFilteredList[filteredIndex] = { ...fullFilteredList[filteredIndex], ...updatedRepair };
+    const searchIndex = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (searchIndex !== -1) searchFilteredList[searchIndex] = { ...searchFilteredList[searchIndex], ...updatedRepair };
+    renderTable(displayedRepairs);
 }
 
 const pendingLogs = new Map();
-
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
-    const oldStr = String(oldValue);
-    const newStr = String(newValue);
+    const oldStr = String(oldValue), newStr = String(newValue);
     const key = `${repairId}|${field}|${oldStr}|${newStr}`;
     const lastTime = pendingLogs.get(key);
     const now = Date.now();
@@ -189,13 +171,8 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     const userEmail = user ? user.email : "unknown";
     try {
         await addDoc(collection(db, "logs"), {
-            repairId,
-            field,
-            oldValue: oldStr,
-            newValue: newStr,
-            changedBy: userEmail,
-            timestamp: new Date().toISOString(),
-            repairTitle
+            repairId, field, oldValue: oldStr, newValue: newStr,
+            changedBy: userEmail, timestamp: new Date().toISOString(), repairTitle
         });
     } catch (err) {
         console.error("Failed to write log:", err);
@@ -217,16 +194,18 @@ onAuthStateChanged(auth, (user) => {
             overlay.style.display = 'flex';
             repairs = [];
             displayedRepairs = [];
-            if (typeof window.filterTable === 'function') window.filterTable();
+            fullFilteredList = [];
+            searchFilteredList = [];
+            isSearchActive = false;
+            currentPage = 1;
+            if (typeof window.applyFiltersAndRender === 'function') window.applyFiltersAndRender();
         }
     }
 });
 
 function getDayRange(date) {
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
+    const start = new Date(date); start.setHours(0,0,0,0);
+    const end = new Date(date); end.setHours(23,59,59,999);
     return { start, end };
 }
 
@@ -235,68 +214,54 @@ function loadData() {
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        
         if (currentView === 'day') {
             const { start, end } = getDayRange(currentDate);
             let dayRepairs = allData.filter(r => {
                 if (!r.createdAt) return true;
-                let d;
-                if (typeof r.createdAt === "string") d = new Date(r.createdAt);
-                else if (r.createdAt.seconds) d = new Date(r.createdAt.seconds * 1000);
-                else return true;
-                if (isNaN(d)) return true;
+                let d = typeof r.createdAt === "string" ? new Date(r.createdAt) : r.createdAt.seconds ? new Date(r.createdAt.seconds * 1000) : null;
+                if (!d || isNaN(d)) return true;
                 return d >= start && d <= end;
             });
-            // Sort descending by SN
             dayRepairs = sortBySNDesc(dayRepairs);
             repairs = dayRepairs;
             fullMonthRepairs = [];
-            currentPage = 1;
-            updateDateLabel();
-            window.filterTable();
-            updateStats();
         } else {
             let monthRepairs = allData.filter(r => {
                 if (!r.createdAt) return false;
-                let d;
-                if (typeof r.createdAt === "string") d = new Date(r.createdAt);
-                else if (r.createdAt.seconds) d = new Date(r.createdAt.seconds * 1000);
-                else return false;
-                if (isNaN(d)) return false;
+                let d = typeof r.createdAt === "string" ? new Date(r.createdAt) : r.createdAt.seconds ? new Date(r.createdAt.seconds * 1000) : null;
+                if (!d || isNaN(d)) return false;
                 const { year, month } = adToBsYearMonth(d);
                 return year === currentNepaliYear && month === currentNepaliMonth;
             });
-            // Sort descending by SN
             monthRepairs = sortBySNDesc(monthRepairs);
             fullMonthRepairs = monthRepairs;
             repairs = monthRepairs;
-            currentPage = 1;
-            updateDateLabel();
-            applyFiltersAndPaginate();
-            updateStats();
         }
+        currentPage = 1;
+        updateDateLabel();
+        const searchInput = document.getElementById('searchInput');
+        const query = searchInput ? searchInput.value.trim() : '';
+        if (query.length >= 2) {
+            performSearch(query);
+        } else {
+            isSearchActive = false;
+            applyFiltersAndRender();
+        }
+        updateStats();
     });
 }
 
-function applyFiltersAndPaginate() {
-    if (currentView !== 'month') return;
-    let filtered = [...fullMonthRepairs];
-    
-    // Tab filter
-    if (currentTab === 'pending') {
-        filtered = filtered.filter(r => r.status !== 'completed' && r.status !== 'returned');
-    } else if (currentTab === 'fixed') {
-        filtered = filtered.filter(r => r.status === 'completed');
-    } else if (currentTab === 'returned') {
-        filtered = filtered.filter(r => r.status === 'returned');
-    }
-    
-    // Status dropdown filter
+function applyFiltersAndRender() {
+    if (isSearchActive) return;
+    let sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
+    let filtered = [...sourceData];
+    if (currentTab === 'pending') filtered = filtered.filter(r => r.status !== 'completed' && r.status !== 'returned');
+    else if (currentTab === 'fixed') filtered = filtered.filter(r => r.status === 'completed');
+    else if (currentTab === 'returned') filtered = filtered.filter(r => r.status === 'returned');
     const filterVal = document.getElementById('statusFilter')?.value || "all";
     if (filterVal !== 'all') {
         filtered = filtered.filter(r => {
-            const cost = Number(r.cost) || 0;
-            const paid = Number(r.paid) || 0;
+            const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
             const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
             const isUnpaid = (cost > 0 && paid < cost);
             if (filterVal === 'paid') return isPaid;
@@ -304,64 +269,78 @@ function applyFiltersAndPaginate() {
             return r.status === filterVal;
         });
     }
-    
-    // Search filter
     const searchInput = document.getElementById('searchInput');
-    let query = '';
-    if (searchInput) query = searchInput.value.trim();
+    let query = searchInput ? searchInput.value.trim() : '';
     if (query.length >= 2) {
         const lowerQuery = query.toLowerCase();
         filtered = filtered.filter(r => 
             (r.customer || '').toLowerCase().includes(lowerQuery) ||
             (r.device || '').toLowerCase().includes(lowerQuery) ||
             (r.sn || '').toLowerCase().includes(lowerQuery) ||
-            (r.phone || '').toLowerCase().includes(lowerQuery)
+            (r.phone || '').toLowerCase().includes(lowerQuery) ||
+            (r.issue || '').toLowerCase().includes(lowerQuery) ||
+            (r.date || '').toLowerCase().includes(lowerQuery)
         );
     }
-    
-    // Sort descending by SN before pagination
     filtered = sortBySNDesc(filtered);
-    
-    totalFilteredForMonth = filtered.length;
+    fullFilteredList = filtered;
+    totalFilteredItems = fullFilteredList.length;
     const start = (currentPage - 1) * itemsPerPage;
-    const paginated = filtered.slice(start, start + itemsPerPage);
-    displayedRepairs = paginated;
+    displayedRepairs = fullFilteredList.slice(start, start + itemsPerPage);
     renderTable(displayedRepairs);
-    updateLoadMoreButton();
+    updatePaginationControls();
 }
 
-function updateLoadMoreButton() {
-    const container = document.getElementById('loadMoreContainer');
-    if (!container) return;
-    if (currentView !== 'month') {
-        container.innerHTML = '';
-        return;
-    }
-    const hasMore = currentPage * itemsPerPage < totalFilteredForMonth;
-    if (hasMore) {
-        container.innerHTML = `<button onclick="loadMore()" class="px-6 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-semibold hover:bg-indigo-100 transition">Load More (${totalFilteredForMonth - currentPage * itemsPerPage} remaining)</button>`;
+function updatePaginationControls() {
+    const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+    const containerTop = document.getElementById('paginationTop');
+    const containerBottom = document.getElementById('paginationBottom');
+    if (!containerTop || !containerBottom) return;
+    const show = totalPages > 1;
+    const html = show ? `
+        <div class="flex items-center justify-center gap-4 mt-6 mb-6">
+            <button onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''} class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition">
+                ← Previous
+            </button>
+            <span class="text-sm text-slate-600">Page ${currentPage} of ${totalPages} (${totalFilteredItems} entries)</span>
+            <button onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''} class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition">
+                Next →
+            </button>
+        </div>
+    ` : '';
+    containerTop.innerHTML = html;
+    containerBottom.innerHTML = html;
+}
+
+window.goToPage = function(page) {
+    const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    if (isSearchActive) {
+        const start = (currentPage - 1) * itemsPerPage;
+        displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
+        renderTable(displayedRepairs);
+        updatePaginationControls();
     } else {
-        container.innerHTML = '';
+        applyFiltersAndRender();
     }
-}
-
-window.loadMore = function() {
-    if (currentView !== 'month') return;
-    currentPage++;
-    applyFiltersAndPaginate();
 };
 
 function resetPagination() {
     currentPage = 1;
-    if (currentView === 'month') {
-        applyFiltersAndPaginate();
+    if (isSearchActive) {
+        const start = 0;
+        displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
+        renderTable(displayedRepairs);
+        updatePaginationControls();
+    } else {
+        applyFiltersAndRender();
     }
 }
 
 function matchesCurrentFilters(repair) {
     const filterVal = document.getElementById('statusFilter')?.value || "all";
-    const cost = Number(repair.cost) || 0;
-    const paid = Number(repair.paid) || 0;
+    const cost = Number(repair.cost) || 0, paid = Number(repair.paid) || 0;
     const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
     const isUnpaid = (cost > 0 && paid < cost);
     let matchesTab = false;
@@ -376,7 +355,7 @@ function matchesCurrentFilters(repair) {
     else if (filterVal !== 'all') matchesFilter = repair.status === filterVal;
     let matchesText = true;
     if (currentSearchQuery.length >= 2) {
-        const text = `${repair.customer||''} ${repair.device||''} ${repair.sn||''} ${repair.phone||''}`.toLowerCase();
+        const text = `${repair.customer||''} ${repair.device||''} ${repair.sn||''} ${repair.phone||''} ${repair.issue||''} ${repair.date||''}`.toLowerCase();
         matchesText = text.includes(currentSearchQuery.toLowerCase());
     }
     return matchesTab && matchesFilter && matchesText;
@@ -410,9 +389,12 @@ function setTab(tab) {
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
     const active = document.getElementById(`card-${tab}`);
     if (active) active.classList.add('active-tab');
-    if (currentView === 'day') {
-        window.filterTable();
+    const searchInput = document.getElementById('searchInput');
+    const query = searchInput ? searchInput.value.trim() : '';
+    if (query.length >= 2) {
+        performSearch(query);
     } else {
+        isSearchActive = false;
         resetPagination();
     }
 }
@@ -423,11 +405,8 @@ function clearSearchInput() {
     if (searchInput) {
         searchInput.value = '';
         currentSearchQuery = '';
-        if (currentView === 'day') {
-            window.filterTable();
-        } else {
-            resetPagination();
-        }
+        isSearchActive = false;
+        resetPagination();
     }
 }
 
@@ -437,34 +416,24 @@ window.prevPeriod = function () {
         clearSearchInput();
         loadData();
     } else {
-        if (currentNepaliMonth === 1) {
-            currentNepaliMonth = 12;
-            currentNepaliYear--;
-        } else {
-            currentNepaliMonth--;
-        }
+        if (currentNepaliMonth === 1) { currentNepaliMonth = 12; currentNepaliYear--; }
+        else { currentNepaliMonth--; }
         clearSearchInput();
         loadData();
     }
 };
-
 window.nextPeriod = function () {
     if (currentView === 'day') {
         currentDate.setDate(currentDate.getDate() + 1);
         clearSearchInput();
         loadData();
     } else {
-        if (currentNepaliMonth === 12) {
-            currentNepaliMonth = 1;
-            currentNepaliYear++;
-        } else {
-            currentNepaliMonth++;
-        }
+        if (currentNepaliMonth === 12) { currentNepaliMonth = 1; currentNepaliYear++; }
+        else { currentNepaliMonth++; }
         clearSearchInput();
         loadData();
     }
 };
-
 window.goToday = function () {
     const today = new Date();
     currentDate = today;
@@ -474,7 +443,6 @@ window.goToday = function () {
     clearSearchInput();
     loadData();
 };
-
 window.toggleViewMode = function () {
     if (currentView === 'day') {
         currentView = 'month';
@@ -490,6 +458,7 @@ window.toggleViewMode = function () {
     if (icon) icon.classList.toggle('rotate-180');
 };
 
+// ========== Modal, Image, Toast ==========
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -512,7 +481,6 @@ window.toggleModal = function (id) {
         }
     }
 };
-
 window.handleImageUpload = function (input) {
     const file = input.files[0];
     if (file) {
@@ -527,7 +495,6 @@ window.handleImageUpload = function (input) {
         reader.readAsDataURL(file);
     }
 };
-
 window.removeImage = function () {
     currentImageData = null;
     const previewDiv = document.getElementById('imagePreview');
@@ -537,49 +504,135 @@ window.removeImage = function () {
     if (gallery) gallery.value = '';
     if (camera) camera.value = '';
 };
-
 window.viewImage = function (src) {
     const modal = document.getElementById('viewImageModal');
     const fullImg = document.getElementById('fullSizeImage');
     if (fullImg) fullImg.src = src;
     if (modal) modal.classList.remove('hidden');
 };
-
 window.jumpToRepairDate = function (repair) {
     if (!repair.createdAt) return;
-    let d;
-    if (typeof repair.createdAt === "string") d = new Date(repair.createdAt);
-    else if (repair.createdAt.seconds) d = new Date(repair.createdAt.seconds * 1000);
-    if (isNaN(d)) return;
-    if (currentView === 'day') {
-        currentDate = d;
-    } else {
-        const { year, month } = adToBsYearMonth(d);
-        currentNepaliYear = year;
-        currentNepaliMonth = month;
-    }
+    let d = typeof repair.createdAt === "string" ? new Date(repair.createdAt) : repair.createdAt.seconds ? new Date(repair.createdAt.seconds * 1000) : null;
+    if (!d || isNaN(d)) return;
+    if (currentView === 'day') currentDate = d;
+    else { const { year, month } = adToBsYearMonth(d); currentNepaliYear = year; currentNepaliMonth = month; }
     clearSearchInput();
     loadData();
     showToast("Jumped to selected date");
 };
-
 window.jumpToRepairDateById = function (id) {
     const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
     if (r) window.jumpToRepairDate(r);
 };
 
+// ========== IMPROVED SMART LOCAL SEARCH (Google‑like, best match first) ==========
+function smartLocalSearch(query, sourceArray) {
+    const lowerQuery = query.toLowerCase();
+    const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) return [];
+    
+    const scored = sourceArray.map(repair => {
+        const fields = {
+            date: (repair.date || '').toLowerCase(),
+            customer: (repair.customer || '').toLowerCase(),
+            device: (repair.device || '').toLowerCase(),
+            sn: (repair.sn || '').toLowerCase(),
+            phone: (repair.phone || '').toLowerCase(),
+            issue: (repair.issue || '').toLowerCase()
+        };
+        
+        let totalScore = 0;
+        // For each word, accumulate the best score across fields
+        for (let word of words) {
+            let bestFieldScore = 0;
+            // Date match (highest priority)
+            if (fields.date.includes(word)) {
+                let score = 20;
+                if (fields.date === word) score = 30;
+                else if (fields.date.startsWith(word) || fields.date.endsWith(word)) score = 25;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            // Customer name
+            if (fields.customer.includes(word)) {
+                let score = 15;
+                if (fields.customer === word) score = 25;
+                else if (fields.customer.split(/\s+/).some(part => part === word)) score = 20;
+                else if (fields.customer.startsWith(word)) score = 18;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            // Device model
+            if (fields.device.includes(word)) {
+                let score = 12;
+                if (fields.device === word) score = 20;
+                else if (fields.device.split(/\s+/).some(part => part === word)) score = 16;
+                else if (fields.device.startsWith(word)) score = 14;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            // Issue description
+            if (fields.issue.includes(word)) {
+                let score = 6;
+                if (fields.issue.split(/\s+/).some(part => part === word)) score = 10;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            // SN number (exact or partial)
+            if (fields.sn.includes(word)) {
+                let score = 4;
+                if (fields.sn === word) score = 12;
+                else if (fields.sn.startsWith(word)) score = 8;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            // Phone number
+            if (fields.phone.includes(word)) {
+                let score = 2;
+                if (fields.phone === word) score = 6;
+                else if (fields.phone.startsWith(word)) score = 4;
+                bestFieldScore = Math.max(bestFieldScore, score);
+            }
+            totalScore += bestFieldScore;
+        }
+        return { repair, score: totalScore };
+    });
+    
+    // Keep only entries with positive score and sort descending by score
+    const results = scored.filter(item => item.score > 0).sort((a,b) => b.score - a.score);
+    let final = results.map(item => item.repair);
+    
+    // Apply current tab and status filters
+    const filterVal = document.getElementById('statusFilter')?.value || "all";
+    final = final.filter(r => {
+        const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
+        const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+        const isUnpaid = (cost > 0 && paid < cost);
+        let matchesTab = false;
+        if (currentTab === 'all') matchesTab = true;
+        else if (currentTab === 'pending') matchesTab = (r.status !== 'completed' && r.status !== 'returned');
+        else if (currentTab === 'fixed') matchesTab = (r.status === 'completed');
+        else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
+        else matchesTab = true;
+        let matchesFilter = true;
+        if (filterVal === 'paid') matchesFilter = isPaid;
+        else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+        else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
+        return matchesTab && matchesFilter;
+    });
+    // Do NOT re‑sort by SN here – preserve score order (relevance)
+    // But we do want to keep SN as secondary sort for ties? Not needed.
+    return final;
+}
+
+// ========== Refresh search results (re‑run full search) ==========
+async function refreshIfSearchActive() {
+    if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
+        await performSearch(currentSearchQuery);
+    }
+}
+
+// ========== Status Management ==========
 window.updateStatus = async function (id) {
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
-    if (!repair) {
-        showToast("Repair not found", true);
-        return;
-    }
+    if (!repair) { showToast("Repair not found", true); return; }
     const currentStatus = repair.status || 'pending';
-    let nextStatus;
-    if (currentStatus === 'pending') nextStatus = 'completed';
-    else if (currentStatus === 'completed') nextStatus = 'returned';
-    else if (currentStatus === 'returned') nextStatus = 'pending';
-    else nextStatus = 'pending';
+    let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
     try {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
         await algoliaIndex.partialUpdateObject({ objectID: id, status: nextStatus });
@@ -587,29 +640,22 @@ window.updateStatus = async function (id) {
         const updatedRepair = { ...repair, status: nextStatus };
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
-            const index = fullMonthRepairs.findIndex(r => r.id === id);
-            if (index !== -1) fullMonthRepairs[index] = updatedRepair;
-            applyFiltersAndPaginate();
+            const idx = fullMonthRepairs.findIndex(r => r.id === id);
+            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
         } else {
-            window.filterTable();
+            const idx = repairs.findIndex(r => r.id === id);
+            if (idx !== -1) repairs[idx] = updatedRepair;
         }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
         updateStats();
-    } catch (err) {
-        console.error(err);
-        alert("Failed to update status");
-    }
+    } catch (err) { console.error(err); alert("Failed to update status"); }
 };
 
 window.markAsReturned = async function (id) {
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
-    if (!repair) {
-        showToast("Repair not found", true);
-        return;
-    }
-    if (repair.status === 'returned') {
-        showToast("Already marked as returned");
-        return;
-    }
+    if (!repair) { showToast("Repair not found", true); return; }
+    if (repair.status === 'returned') { showToast("Already marked as returned"); return; }
     try {
         await updateDoc(doc(db, "repairs", id), { status: 'returned' });
         await algoliaIndex.partialUpdateObject({ objectID: id, status: 'returned' });
@@ -617,17 +663,16 @@ window.markAsReturned = async function (id) {
         const updatedRepair = { ...repair, status: 'returned' };
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
-            const index = fullMonthRepairs.findIndex(r => r.id === id);
-            if (index !== -1) fullMonthRepairs[index] = updatedRepair;
-            applyFiltersAndPaginate();
+            const idx = fullMonthRepairs.findIndex(r => r.id === id);
+            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
         } else {
-            window.filterTable();
+            const idx = repairs.findIndex(r => r.id === id);
+            if (idx !== -1) repairs[idx] = updatedRepair;
         }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
         updateStats();
-    } catch (err) {
-        console.error(err);
-        alert("Failed to mark as returned");
-    }
+    } catch (err) { console.error(err); alert("Failed to mark as returned"); }
 };
 
 window.editRepair = function (id) {
@@ -646,12 +691,8 @@ window.editRepair = function (id) {
     currentImageData = repair.image || null;
     const previewImg = document.getElementById('previewImg');
     const previewDiv = document.getElementById('imagePreview');
-    if (repair.image) {
-        if (previewImg) previewImg.src = repair.image;
-        if (previewDiv) previewDiv.classList.remove('hidden');
-    } else {
-        if (previewDiv) previewDiv.classList.add('hidden');
-    }
+    if (repair.image) { previewImg.src = repair.image; previewDiv.classList.remove('hidden'); }
+    else { previewDiv.classList.add('hidden'); }
     window.toggleModal('entryModal');
 };
 
@@ -663,68 +704,91 @@ window.deleteRepair = async function (id) {
         showToast("Deleted successfully");
         if (currentView === 'month') {
             fullMonthRepairs = fullMonthRepairs.filter(r => r.id !== id);
-            applyFiltersAndPaginate();
+            repairs = fullMonthRepairs;
         } else {
             repairs = repairs.filter(r => r.id !== id);
-            window.filterTable();
         }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
         updateStats();
-    } catch (err) {
-        console.error(err);
-        alert("Delete failed");
-    }
+    } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-window.filterTable = function() {
-    if (currentView !== 'day') return;
-    if (currentSearchQuery.length >= 2) {
-        performSearch(currentSearchQuery);
-    } else {
-        let data = [...repairs];
-        const filterVal = document.getElementById('statusFilter')?.value || "all";
-        data = data.filter(r => {
-            const cost = Number(r.cost) || 0;
-            const paid = Number(r.paid) || 0;
-            const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
-            const isUnpaid = (cost > 0 && paid < cost);
-            let matchesTab = false;
-            if (currentTab === 'all') matchesTab = true;
-            else if (currentTab === 'pending') matchesTab = (r.status !== 'completed' && r.status !== 'returned');
-            else if (currentTab === 'fixed') matchesTab = (r.status === 'completed');
-            else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
-            else matchesTab = true;
-            let matchesFilter = true;
-            if (filterVal === 'paid') matchesFilter = isPaid;
-            else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
-            else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
-            return matchesTab && matchesFilter;
-        });
-        // Sort descending by SN
-        data = sortBySNDesc(data);
-        displayedRepairs = data;
-        renderTable(displayedRepairs);
-        updateLoadMoreButton();
-    }
-};
-
+// ========== MAIN SEARCH (Algolia + smart local fallback) ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
     if (!isSearching) {
-        window.filterTable();
+        isSearchActive = false;
+        resetPagination();
         return;
     }
+    isSearchActive = true;
     try {
-        const res = await algoliaIndex.search(query, { hitsPerPage: 200 });
+        const searchParams = {
+            hitsPerPage: 200,
+            typoTolerance: true,
+            removeStopWords: true,
+            ignorePlurals: true,
+            advancedSyntax: true,
+            exactOnSingleWordQuery: 'attribute',
+            query: query,
+            restrictSearchableAttributes: ['date', 'customer', 'device', 'sn', 'phone', 'issue'],
+            optionalWords: ['/', '-']
+        };
+        const res = await algoliaIndex.search(query, searchParams);
         let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
-        hits = hits.filter(r => matchesCurrentFilters(r));
-        hits = sortBySNDesc(hits); // sort search results descending by SN
-        displayedRepairs = hits;
+        
+        if (hits.length === 0) {
+            // Fallback to smart local search
+            const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
+            hits = smartLocalSearch(query, sourceData);
+        } else {
+            // For Algolia results, we still need to apply tab/status filters and then sort by a relevance score.
+            // Algolia already returns them in order of relevance, but after filtering we may lose ordering.
+            // So we re‑sort using the same scoring logic to ensure best match first.
+            // However, to keep things fast, we'll rely on Algolia's order and only filter.
+            // But we must apply tab/status filters.
+            hits = hits.filter(r => {
+                const filterVal = document.getElementById('statusFilter')?.value || "all";
+                const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
+                const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+                const isUnpaid = (cost > 0 && paid < cost);
+                let matchesTab = false;
+                if (currentTab === 'all') matchesTab = true;
+                else if (currentTab === 'pending') matchesTab = (r.status !== 'completed' && r.status !== 'returned');
+                else if (currentTab === 'fixed') matchesTab = (r.status === 'completed');
+                else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
+                else matchesTab = true;
+                let matchesFilter = true;
+                if (filterVal === 'paid') matchesFilter = isPaid;
+                else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+                else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
+                return matchesTab && matchesFilter;
+            });
+            // Keep the original Algolia order (they are already sorted by relevance)
+        }
+        // If we used local search, hits are already sorted by score. For Algolia, they are sorted by Algolia's ranking.
+        // We'll keep the order as is.
+        searchFilteredList = hits;
+        totalFilteredItems = searchFilteredList.length;
+        currentPage = 1;
+        displayedRepairs = searchFilteredList.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
+        updatePaginationControls();
+        if (hits.length === 0) showToast(`No results for "${query}"`);
+        else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
-        console.log("Algolia search error:", err);
-        displayedRepairs = [];
+        console.error("Algolia search error:", err);
+        const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
+        const hits = smartLocalSearch(query, sourceData);
+        searchFilteredList = hits;
+        totalFilteredItems = searchFilteredList.length;
+        currentPage = 1;
+        displayedRepairs = searchFilteredList.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
+        updatePaginationControls();
+        showToast(`Search completed with ${hits.length} results (local smart search)`);
     }
 }
 
@@ -734,12 +798,7 @@ function onSearchInput() {
     const query = input.value.trim();
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
     searchDebounceTimer = setTimeout(() => {
-        if (currentView === 'day') {
-            performSearch(query);
-        } else {
-            currentSearchQuery = query;
-            resetPagination();
-        }
+        performSearch(query);
     }, 300);
 }
 
@@ -753,10 +812,7 @@ function renderTable(data = repairs) {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
         const tr = document.createElement('tr');
         tr.className = "table-row-hover group border-b border-slate-50";
-        let statusColor = '';
-        if (repair.status === 'completed') statusColor = 'bg-emerald-50 text-emerald-600';
-        else if (repair.status === 'returned') statusColor = 'bg-blue-50 text-blue-600';
-        else statusColor = 'bg-orange-50 text-orange-600';
+        let statusColor = repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : repair.status === 'returned' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600';
         tr.innerHTML = `
             <td class="px-8 py-6">
                 <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
@@ -786,19 +842,14 @@ function renderTable(data = repairs) {
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
-             </tr>
+             </td>
         `;
         tbody.appendChild(tr);
     });
 }
 
 function updateStats() {
-    let dataForStats = [];
-    if (currentView === 'day') {
-        dataForStats = repairs;
-    } else {
-        dataForStats = fullMonthRepairs;
-    }
+    let dataForStats = (currentView === 'day') ? repairs : fullMonthRepairs;
     const pending = dataForStats.filter(r => r.status === 'pending').length;
     const fixed = dataForStats.filter(r => r.status === 'completed').length;
     const returned = dataForStats.filter(r => r.status === 'returned').length;
@@ -810,18 +861,10 @@ function updateStats() {
     if (document.getElementById('stat-returned-count')) document.getElementById('stat-returned-count').textContent = returned;
     if (document.getElementById('stat-revenue')) document.getElementById('stat-revenue').textContent = `रू${revenue.toLocaleString()}`;
     if (document.getElementById('stat-credit')) document.getElementById('stat-credit').textContent = `रू${credit.toLocaleString()}`;
-
-    // Re-apply censorship after updating numbers
-    if (revenueCensored) {
-        document.getElementById('stat-revenue')?.classList.add('blur-strong');
-    } else {
-        document.getElementById('stat-revenue')?.classList.remove('blur-strong');
-    }
-    if (dueCensored) {
-        document.getElementById('stat-credit')?.classList.add('blur-strong');
-    } else {
-        document.getElementById('stat-credit')?.classList.remove('blur-strong');
-    }
+    if (revenueCensored) document.getElementById('stat-revenue')?.classList.add('blur-strong');
+    else document.getElementById('stat-revenue')?.classList.remove('blur-strong');
+    if (dueCensored) document.getElementById('stat-credit')?.classList.add('blur-strong');
+    else document.getElementById('stat-credit')?.classList.remove('blur-strong');
 }
 
 function showToast(msg, isError = false) {
@@ -838,15 +881,12 @@ window.showLogsModal = async function () {
     const logsModal = document.getElementById('logsModal');
     if (!logsModal) return;
     const logsList = document.getElementById('logsList');
-    if (logsList) logsList.innerHTML = '<div class="p-4 text-center">Loading logs...</div>';
+    logsList.innerHTML = '<div class="p-4 text-center">Loading logs...</div>';
     window.toggleModal('logsModal');
     try {
         const q = query(collection(db, "logs"), orderBy("timestamp", "desc"));
         const snapshot = await getDocs(q);
-        if (snapshot.empty) {
-            if (logsList) logsList.innerHTML = '<div class="p-4 text-center text-slate-500">No logs found.</div>';
-            return;
-        }
+        if (snapshot.empty) { logsList.innerHTML = '<div class="p-4 text-center text-slate-500">No logs found.</div>'; return; }
         let html = '<div class="divide-y divide-slate-100">';
         snapshot.forEach(docSnap => {
             const log = docSnap.data();
@@ -860,11 +900,8 @@ window.showLogsModal = async function () {
             `;
         });
         html += '</div>';
-        if (logsList) logsList.innerHTML = html;
-    } catch (err) {
-        console.error(err);
-        if (logsList) logsList.innerHTML = '<div class="p-4 text-center text-red-500">Failed to load logs.</div>';
-    }
+        logsList.innerHTML = html;
+    } catch (err) { console.error(err); logsList.innerHTML = '<div class="p-4 text-center text-red-500">Failed to load logs.</div>'; }
 };
 
 function toggleLogoMenu() {
@@ -912,65 +949,46 @@ window.onload = () => {
     const logoArea = document.querySelector('.flex.items-center.gap-3');
     if (logoArea) {
         logoArea.style.cursor = 'pointer';
-        logoArea.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleLogoMenu();
-        });
+        logoArea.addEventListener('click', (e) => { e.stopPropagation(); toggleLogoMenu(); });
     }
 
     const dateLabel = document.getElementById('dateLabel');
-    if (dateLabel) {
-        dateLabel.style.cursor = 'pointer';
-        dateLabel.addEventListener('click', () => {
-            window.goToday();
-        });
-    }
+    if (dateLabel) dateLabel.addEventListener('click', () => window.goToday());
 
     const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.addEventListener('input', onSearchInput);
-    }
+    if (searchInput) searchInput.addEventListener('input', onSearchInput);
 
     const statusFilter = document.getElementById('statusFilter');
     if (statusFilter) {
         statusFilter.addEventListener('change', () => {
-            if (currentView === 'day') {
-                window.filterTable();
-            } else {
-                resetPagination();
-            }
+            const searchInputEl = document.getElementById('searchInput');
+            const query = searchInputEl ? searchInputEl.value.trim() : '';
+            if (query.length >= 2) performSearch(query);
+            else resetPagination();
         });
     }
 
     const form = document.getElementById('repairForm');
     if (!form) return;
-
     let isSubmitting = false;
-
     form.onsubmit = async function (e) {
         e.preventDefault();
         if (isSubmitting) return;
         isSubmitting = true;
         showToast("Saving...");
-
         try {
             let finalImageUrl = currentImageData;
             if (currentImageData && currentImageData.startsWith('data:image')) {
                 const imgFormData = new FormData();
                 imgFormData.append("image", currentImageData.split(',')[1]);
-                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
-                    method: "POST",
-                    body: imgFormData
-                });
+                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, { method: "POST", body: imgFormData });
                 const result = await res.json();
                 if (result.success) finalImageUrl = result.data.url;
             }
-
             let costVal = Number(document.getElementById('cost').value) || 0;
             let paidVal = Number(document.getElementById('paid').value) || 0;
             if (costVal === 0 && paidVal > 0) costVal = paidVal;
             const isCompleted = paidVal > 0 && paidVal >= costVal;
-
             const formData = {
                 customer: document.getElementById('customerName').value,
                 phone: document.getElementById('customerPhone').value,
@@ -984,79 +1002,48 @@ window.onload = () => {
             };
             const passwordInput = document.getElementById('devicePassword')?.value;
             if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
-
             if (currentlyEditingId) {
-                // Edit existing repair (preserve createdAt)
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
-                let updatedRepair = null;
                 if (oldSnap.exists()) {
                     const oldData = oldSnap.data();
                     const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
-                    if (oldData.phone !== formData.phone) {
-                        await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
-                        sendNotification("Phone changed", `Repair #${currentlyEditingId}: ${oldData.phone || "empty"} → ${formData.phone}`);
-                    }
-                    if (Number(oldData.cost || 0) !== costVal) {
-                        await logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle);
-                        sendNotification("Price changed", `Repair #${currentlyEditingId}: cost ${oldData.cost || 0} → ${costVal}`);
-                    }
-                    if (Number(oldData.paid || 0) !== paidVal) {
-                        await logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle);
-                        sendNotification("Payment changed", `Repair #${currentlyEditingId}: paid ${oldData.paid || 0} → ${paidVal}`);
-                    }
-                    updatedRepair = {
-                        ...oldData,
-                        ...formData,
-                        status: isCompleted ? 'completed' : 'pending',
-                        id: currentlyEditingId
-                    };
+                    if (oldData.phone !== formData.phone) await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
+                    if (Number(oldData.cost || 0) !== costVal) await logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle);
+                    if (Number(oldData.paid || 0) !== paidVal) await logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle);
                 }
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
                 await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
                 showToast("Updated successfully");
-                if (updatedRepair) {
-                    updateSearchResultLocally(updatedRepair);
-                    if (currentView === 'month') {
-                        const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
-                        if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
-                        applyFiltersAndPaginate();
-                    } else {
-                        window.filterTable();
-                    }
-                    updateStats();
-                }
-            } else {
-                // NEW ENTRY – use the currently selected date (day view date or today for month view)
-                let selectedDate;
-                if (currentView === 'day') {
-                    selectedDate = new Date(currentDate);
+                if (currentView === 'month') {
+                    const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
+                    if (idx !== -1) fullMonthRepairs[idx] = { ...fullMonthRepairs[idx], ...updatedData };
                 } else {
-                    selectedDate = new Date();
+                    const idx = repairs.findIndex(r => r.id === currentlyEditingId);
+                    if (idx !== -1) repairs[idx] = { ...repairs[idx], ...updatedData };
                 }
-                selectedDate.setHours(12, 0, 0, 0);
+                await refreshIfSearchActive();
+                if (!isSearchActive) applyFiltersAndRender();
+                updateStats();
+            } else {
+                let selectedDate = (currentView === 'day') ? new Date(currentDate) : new Date();
+                selectedDate.setHours(12,0,0,0);
                 const createdAtISO = selectedDate.toISOString();
                 let finalDateStr = "";
                 try {
                     if (typeof window.NepaliDate === 'function') {
                         const nepDate = new NepaliDate(selectedDate);
                         finalDateStr = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
-                    } else {
-                        finalDateStr = selectedDate.toLocaleDateString();
-                    }
-                } catch (e) {
-                    finalDateStr = selectedDate.toLocaleDateString();
-                }
-                const newEntry = {
-                    ...formData,
-                    status: isCompleted ? 'completed' : 'pending',
-                    date: finalDateStr,
-                    createdAt: createdAtISO
-                };
+                    } else finalDateStr = selectedDate.toLocaleDateString();
+                } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
+                const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
                 await algoliaIndex.saveObject({ objectID: docRef.id, ...newEntry });
                 showToast("Repair added");
+                await refreshIfSearchActive();
+                if (!isSearchActive) applyFiltersAndRender();
+                updateStats();
             }
             window.toggleModal('entryModal');
             currentlyEditingId = null;
@@ -1074,9 +1061,7 @@ window.syncAllToAlgolia = async function () {
     console.log("🔥 Syncing ALL Firebase data to Algolia...");
     const snapshot = await getDocs(collection(db, "repairs"));
     const batch = [];
-    snapshot.forEach(docSnap => {
-        batch.push({ objectID: docSnap.id, ...docSnap.data() });
-    });
+    snapshot.forEach(docSnap => batch.push({ objectID: docSnap.id, ...docSnap.data() }));
     await algoliaIndex.saveObjects(batch);
     console.log("✅ Sync complete:", batch.length);
 };
