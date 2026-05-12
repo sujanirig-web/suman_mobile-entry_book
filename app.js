@@ -137,6 +137,15 @@ function adToBsYearMonth(adDate) {
         return { year: 2080, month: 1 };
     }
 }
+function getTodayBSDate() {
+    const today = new Date();
+    try {
+        const nepDate = new NepaliDate(today);
+        return nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
+    } catch (e) {
+        return today.toLocaleDateString();
+    }
+}
 
 function sendNotification(title, body) {
     showToast(body);
@@ -259,7 +268,10 @@ function applyFiltersAndRender() {
     else if (currentTab === 'fixed') filtered = filtered.filter(r => r.status === 'completed');
     else if (currentTab === 'returned') filtered = filtered.filter(r => r.status === 'returned');
     const filterVal = document.getElementById('statusFilter')?.value || "all";
-    if (filterVal !== 'all') {
+    const todayBS = getTodayBSDate();
+    if (filterVal === 'today') {
+        filtered = filtered.filter(r => r.date === todayBS);
+    } else if (filterVal !== 'all') {
         filtered = filtered.filter(r => {
             const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
             const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
@@ -340,6 +352,7 @@ function resetPagination() {
 
 function matchesCurrentFilters(repair) {
     const filterVal = document.getElementById('statusFilter')?.value || "all";
+    const todayBS = getTodayBSDate();
     const cost = Number(repair.cost) || 0, paid = Number(repair.paid) || 0;
     const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
     const isUnpaid = (cost > 0 && paid < cost);
@@ -350,9 +363,15 @@ function matchesCurrentFilters(repair) {
     else if (currentTab === 'returned') matchesTab = (repair.status === 'returned');
     else matchesTab = true;
     let matchesFilter = true;
-    if (filterVal === 'paid') matchesFilter = isPaid;
-    else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
-    else if (filterVal !== 'all') matchesFilter = repair.status === filterVal;
+    if (filterVal === 'today') {
+        matchesFilter = (repair.date === todayBS);
+    } else if (filterVal === 'paid') {
+        matchesFilter = isPaid;
+    } else if (filterVal === 'unpaid') {
+        matchesFilter = isUnpaid;
+    } else if (filterVal !== 'all') {
+        matchesFilter = repair.status === filterVal;
+    }
     let matchesText = true;
     if (currentSearchQuery.length >= 2) {
         const text = `${repair.customer||''} ${repair.device||''} ${repair.sn||''} ${repair.phone||''} ${repair.issue||''} ${repair.date||''}`.toLowerCase();
@@ -599,6 +618,7 @@ function smartLocalSearch(query, sourceArray) {
     
     // Apply current tab and status filters
     const filterVal = document.getElementById('statusFilter')?.value || "all";
+    const todayBS = getTodayBSDate();
     final = final.filter(r => {
         const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
         const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
@@ -610,13 +630,18 @@ function smartLocalSearch(query, sourceArray) {
         else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
         else matchesTab = true;
         let matchesFilter = true;
-        if (filterVal === 'paid') matchesFilter = isPaid;
-        else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
-        else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
+        if (filterVal === 'today') {
+            matchesFilter = (r.date === todayBS);
+        } else if (filterVal === 'paid') {
+            matchesFilter = isPaid;
+        } else if (filterVal === 'unpaid') {
+            matchesFilter = isUnpaid;
+        } else if (filterVal !== 'all') {
+            matchesFilter = r.status === filterVal;
+        }
         return matchesTab && matchesFilter;
     });
     // Do NOT re‑sort by SN here – preserve score order (relevance)
-    // But we do want to keep SN as secondary sort for ties? Not needed.
     return final;
 }
 
@@ -744,11 +769,8 @@ async function performSearch(query) {
             const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
             hits = smartLocalSearch(query, sourceData);
         } else {
-            // For Algolia results, we still need to apply tab/status filters and then sort by a relevance score.
-            // Algolia already returns them in order of relevance, but after filtering we may lose ordering.
-            // So we re‑sort using the same scoring logic to ensure best match first.
-            // However, to keep things fast, we'll rely on Algolia's order and only filter.
-            // But we must apply tab/status filters.
+            // Apply tab and status filters (including "today")
+            const todayBS = getTodayBSDate();
             hits = hits.filter(r => {
                 const filterVal = document.getElementById('statusFilter')?.value || "all";
                 const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
@@ -761,15 +783,19 @@ async function performSearch(query) {
                 else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
                 else matchesTab = true;
                 let matchesFilter = true;
-                if (filterVal === 'paid') matchesFilter = isPaid;
-                else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
-                else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
+                if (filterVal === 'today') {
+                    matchesFilter = (r.date === todayBS);
+                } else if (filterVal === 'paid') {
+                    matchesFilter = isPaid;
+                } else if (filterVal === 'unpaid') {
+                    matchesFilter = isUnpaid;
+                } else if (filterVal !== 'all') {
+                    matchesFilter = r.status === filterVal;
+                }
                 return matchesTab && matchesFilter;
             });
-            // Keep the original Algolia order (they are already sorted by relevance)
+            // Keep original Algolia order (relevance)
         }
-        // If we used local search, hits are already sorted by score. For Algolia, they are sorted by Algolia's ranking.
-        // We'll keep the order as is.
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
         currentPage = 1;
@@ -781,7 +807,7 @@ async function performSearch(query) {
     } catch (err) {
         console.error("Algolia search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
-        const hits = smartLocalSearch(query, sourceData);
+        const hits = smartLocalSearch(query, sourceData);  // already filters by 'today' inside smartLocalSearch
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
         currentPage = 1;

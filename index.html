@@ -92,13 +92,14 @@
                 <!-- Removed onkeyup="filterTable()" -->
                 <input type="text" id="searchInput" placeholder="Search..." class="w-full md:w-80 pl-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm shadow-sm">
                 <!-- Removed onchange="filterTable()" -->
-                <select id="statusFilter" class="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium">
-                    <option value="all">Filter: All</option>
-                    <option value="pending">Pending</option>
-                    <option value="completed">Completed</option>
-                    <option value="paid">paid</option>
-                    <option value="unpaid">Unpaid</option>
-                </select>
+               <select id="statusFilter" class="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium">
+    <option value="today" selected>Today</option>
+    <option value="all">All</option>
+    <option value="pending">Pending</option>
+    <option value="completed">Completed</option>
+    <option value="paid">Paid</option>
+    <option value="unpaid">Unpaid</option>
+</select>
                 <div class="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
                     <button onclick="prevPeriod()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">←</button>
                     <span id="dateLabel" onclick="goToday()" class="text-sm font-semibold text-slate-700 min-w-[120px] text-center cursor-pointer hover:text-indigo-600 transition">Today</span>
