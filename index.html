@@ -17,8 +17,16 @@
             transition: transform 0.3s ease;
         }
         .blur-strong {
-            filter: blur(16px);
+            filter: blur(20px);
         }
+        /* border between entreis settings */
+        #repairTableBody tr {
+            border-bottom: 1px solid #cbd5e1 !important; /* slate-300, clearly visible */
+        }
+        #repairTableBody tr:hover {
+            background-color: #f8fafc; /* subtle hover effect */
+        }
+        
     </style>
 </head>
 <body class="min-h-screen pb-12">
@@ -29,7 +37,7 @@
             <h2 style="margin-bottom:15px;">Login</h2>
             <input id="loginEmail" type="email" placeholder="Email" style="width:100%; margin-bottom:10px; padding:8px; font-size:16px;">
             <input id="loginPass" type="password" placeholder="Password" style="width:100%; margin-bottom:10px; padding:8px; font-size:16px;">
-            <button id="loginBtn" style="width:100%; padding:10px; background:black; color:white;">Access Dashboard</button>
+            <button id="loginBtn" style="width:100%; padding:10px; background:black; color:white;">Access Book</button>
         </div>
     </div>
 
