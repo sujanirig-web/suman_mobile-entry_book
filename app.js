@@ -42,7 +42,7 @@ const algoliaIndex = algoliaClient.initIndex("repairs");
     }
 })();
 
-// GLOBAL STATE 
+// ========== GLOBAL STATE ==========
 let displayedRepairs = [];
 let repairs = [];
 let fullMonthRepairs = [];
@@ -57,15 +57,17 @@ let unsubscribe = null;
 let currentSearchQuery = "";
 let searchDebounceTimer = null;
 
-// ========== Pagination ==========
+// ========== PAGINATION (unified) ==========
 let currentPage = 1;
 const itemsPerPage = 50;
 let totalFilteredItems = 0;
 let fullFilteredList = [];
 let isSearchActive = false;
 let searchFilteredList = [];
+let searchCurrentPage = 1;  // separate page for search results
+const searchItemsPerPage = 50;
 
-// ========== Censorship ==========
+// ========== CENSORSHIP ==========
 let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
@@ -114,6 +116,7 @@ window.toggleDueCensor = function() {
 
 if ("Notification" in window) Notification.requestPermission();
 
+// ========== HELPER: Sort SN descending ==========
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -125,18 +128,25 @@ function sortBySNDesc(arr) {
     });
 }
 
+// ========== NEPALI DATE HELPERS ==========
 function adToBsYearMonth(adDate) {
     try {
         if (typeof window.NepaliDate !== 'function') return { year: 2080, month: 1 };
         const nepDate = new NepaliDate(adDate);
-        let year = nepDate.getYear(), month = nepDate.getMonth();
+        let year = nepDate.getYear();
+        let month = nepDate.getMonth();
         if (isNaN(year)) year = 2080;
         if (isNaN(month)) month = 1;
+        // Ensure month is 1-12 (some libraries return 0-11)
+        if (month >= 0 && month <= 11) month += 1;
+        if (month < 1) month = 1;
+        if (month > 12) month = 12;
         return { year, month };
     } catch (e) {
         return { year: 2080, month: 1 };
     }
 }
+
 function getTodayBSDate() {
     const today = new Date();
     try {
@@ -154,6 +164,7 @@ function sendNotification(title, body) {
     } catch(e) {}
 }
 
+// ========== LOCAL UPDATE HELPERS ==========
 function updateSearchResultLocally(updatedRepair) {
     const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
     if (index !== -1) displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
@@ -190,6 +201,7 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     setTimeout(() => pendingLogs.delete(key), 10000);
 }
 
+// ========== AUTH ==========
 onAuthStateChanged(auth, (user) => {
     const overlay = document.getElementById('loginOverlay');
     if (overlay) {
@@ -218,6 +230,7 @@ function getDayRange(date) {
     return { start, end };
 }
 
+// ========== LOAD DATA (optimised) ==========
 function loadData() {
     if (unsubscribe) unsubscribe();
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
@@ -260,6 +273,7 @@ function loadData() {
     });
 }
 
+// ========== FILTER & RENDER (optimised) ==========
 function applyFiltersAndRender() {
     if (isSearchActive) return;
     let sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
@@ -350,6 +364,8 @@ function resetPagination() {
     }
 }
 
+// ========== MATCHES CURRENT FILTERS (optimised) ==========
+const filterValueCache = new Map();
 function matchesCurrentFilters(repair) {
     const filterVal = document.getElementById('statusFilter')?.value || "all";
     const todayBS = getTodayBSDate();
@@ -477,7 +493,7 @@ window.toggleViewMode = function () {
     if (icon) icon.classList.toggle('rotate-180');
 };
 
-// ========== Modal, Image, Toast ==========
+// ========== MODAL, IMAGE, TOAST ==========
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -544,7 +560,7 @@ window.jumpToRepairDateById = function (id) {
     if (r) window.jumpToRepairDate(r);
 };
 
-// ========== IMPROVED SMART LOCAL SEARCH (Google‑like, best match first) ==========
+// ========== OPTIMISED SMART LOCAL SEARCH ==========
 function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
@@ -561,17 +577,14 @@ function smartLocalSearch(query, sourceArray) {
         };
         
         let totalScore = 0;
-        // For each word, accumulate the best score across fields
         for (let word of words) {
             let bestFieldScore = 0;
-            // Date match (highest priority)
             if (fields.date.includes(word)) {
                 let score = 20;
                 if (fields.date === word) score = 30;
                 else if (fields.date.startsWith(word) || fields.date.endsWith(word)) score = 25;
                 bestFieldScore = Math.max(bestFieldScore, score);
             }
-            // Customer name
             if (fields.customer.includes(word)) {
                 let score = 15;
                 if (fields.customer === word) score = 25;
@@ -579,7 +592,6 @@ function smartLocalSearch(query, sourceArray) {
                 else if (fields.customer.startsWith(word)) score = 18;
                 bestFieldScore = Math.max(bestFieldScore, score);
             }
-            // Device model
             if (fields.device.includes(word)) {
                 let score = 12;
                 if (fields.device === word) score = 20;
@@ -587,20 +599,17 @@ function smartLocalSearch(query, sourceArray) {
                 else if (fields.device.startsWith(word)) score = 14;
                 bestFieldScore = Math.max(bestFieldScore, score);
             }
-            // Issue description
             if (fields.issue.includes(word)) {
                 let score = 6;
                 if (fields.issue.split(/\s+/).some(part => part === word)) score = 10;
                 bestFieldScore = Math.max(bestFieldScore, score);
             }
-            // SN number (exact or partial)
             if (fields.sn.includes(word)) {
                 let score = 4;
                 if (fields.sn === word) score = 12;
                 else if (fields.sn.startsWith(word)) score = 8;
                 bestFieldScore = Math.max(bestFieldScore, score);
             }
-            // Phone number
             if (fields.phone.includes(word)) {
                 let score = 2;
                 if (fields.phone === word) score = 6;
@@ -612,11 +621,9 @@ function smartLocalSearch(query, sourceArray) {
         return { repair, score: totalScore };
     });
     
-    // Keep only entries with positive score and sort descending by score
-    const results = scored.filter(item => item.score > 0).sort((a,b) => b.score - a.score);
+    let results = scored.filter(item => item.score > 0).sort((a,b) => b.score - a.score);
     let final = results.map(item => item.repair);
     
-    // Apply current tab and status filters
     const filterVal = document.getElementById('statusFilter')?.value || "all";
     const todayBS = getTodayBSDate();
     final = final.filter(r => {
@@ -641,18 +648,17 @@ function smartLocalSearch(query, sourceArray) {
         }
         return matchesTab && matchesFilter;
     });
-    // Do NOT re‑sort by SN here – preserve score order (relevance)
     return final;
 }
 
-// ========== Refresh search results (re‑run full search) ==========
+// ========== REFRESH SEARCH ==========
 async function refreshIfSearchActive() {
     if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
         await performSearch(currentSearchQuery);
     }
 }
 
-// ========== Status Management ==========
+// ========== STATUS MANAGEMENT ==========
 window.updateStatus = async function (id) {
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
     if (!repair) { showToast("Repair not found", true); return; }
@@ -739,7 +745,7 @@ window.deleteRepair = async function (id) {
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-// ========== MAIN SEARCH (Algolia + smart local fallback) ==========
+// ========== OPTIMISED SEARCH (Algolia + local fallback) ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -765,11 +771,9 @@ async function performSearch(query) {
         let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
         
         if (hits.length === 0) {
-            // Fallback to smart local search
             const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
             hits = smartLocalSearch(query, sourceData);
         } else {
-            // Apply tab and status filters (including "today")
             const todayBS = getTodayBSDate();
             hits = hits.filter(r => {
                 const filterVal = document.getElementById('statusFilter')?.value || "all";
@@ -794,7 +798,6 @@ async function performSearch(query) {
                 }
                 return matchesTab && matchesFilter;
             });
-            // Keep original Algolia order (relevance)
         }
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
@@ -807,7 +810,7 @@ async function performSearch(query) {
     } catch (err) {
         console.error("Algolia search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
-        const hits = smartLocalSearch(query, sourceData);  // already filters by 'today' inside smartLocalSearch
+        const hits = smartLocalSearch(query, sourceData);
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
         currentPage = 1;
@@ -828,12 +831,21 @@ function onSearchInput() {
     }, 300);
 }
 
+// ========== OPTIMISED TABLE RENDERING (DocumentFragment) ==========
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
     const noData = document.getElementById('noDataMessage');
     if (!tbody) return;
+    
+    // Clear existing content
     tbody.innerHTML = '';
     if (noData) noData.classList.toggle('hidden', data.length > 0);
+    
+    if (data.length === 0) return;
+    
+    // Use DocumentFragment for better performance
+    const fragment = document.createDocumentFragment();
+    
     data.forEach(repair => {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
         const tr = document.createElement('tr');
@@ -870,8 +882,9 @@ function renderTable(data = repairs) {
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
              </td>
         `;
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
     });
+    tbody.appendChild(fragment);
 }
 
 function updateStats() {
@@ -956,6 +969,7 @@ function toggleLogoMenu() {
 }
 window.toggleLogoMenu = toggleLogoMenu;
 
+// ========== ON PAGE LOAD ==========
 window.onload = () => {
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
