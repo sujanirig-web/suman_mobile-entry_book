@@ -560,6 +560,28 @@ window.jumpToRepairDateById = function (id) {
     if (r) window.jumpToRepairDate(r);
 };
 
+// ========== IMAGE COMPRESSION HELPER ==========
+function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            if (width > maxWidth) {
+                height = (height * maxWidth) / width;
+                width = maxWidth;
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = dataUrl;
+    });
+}
+
 // ========== OPTIMISED SMART LOCAL SEARCH ==========
 function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
@@ -1019,9 +1041,18 @@ window.onload = () => {
         try {
             let finalImageUrl = currentImageData;
             if (currentImageData && currentImageData.startsWith('data:image')) {
-                const imgFormData = new FormData();
-                imgFormData.append("image", currentImageData.split(',')[1]);
-                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, { method: "POST", body: imgFormData });
+                // Compress the image before upload
+                showToast("Compressing image...");
+                const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
+                // Convert data URL to Blob
+                const blob = await (await fetch(compressedDataUrl)).blob();
+                const formData = new FormData();
+                formData.append("image", blob, "repair.jpg");
+                showToast("Uploading image...");
+                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
+                    method: "POST",
+                    body: formData
+                });
                 const result = await res.json();
                 if (result.success) finalImageUrl = result.data.url;
             }
