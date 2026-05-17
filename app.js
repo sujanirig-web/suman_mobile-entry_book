@@ -1048,7 +1048,7 @@ window.onload = () => {
                 const blob = await (await fetch(compressedDataUrl)).blob();
                 const formData = new FormData();
                 formData.append("image", blob, "repair.jpg");
-                showToast("Uploading image...");
+                showToast("SAVING TO ENTRYBOOK...");
                 const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
                     method: "POST",
                     body: formData
