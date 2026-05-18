@@ -116,7 +116,7 @@ window.toggleDueCensor = function() {
 
 if ("Notification" in window) Notification.requestPermission();
 
-// ========== HELPER: Sort SN descending ==========
+// ========== HELPER: Sort SN descending (for normal table view) ==========
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -125,6 +125,18 @@ function sortBySNDesc(arr) {
         if (!isNaN(numA)) return -1;
         if (!isNaN(numB)) return 1;
         return snB.localeCompare(snA);
+    });
+}
+
+// ========== HELPER: Sort SN ascending (for search results) ==========
+function sortBySNAsc(arr) {
+    return arr.sort((a, b) => {
+        const snA = a.sn || '', snB = b.sn || '';
+        const numA = parseInt(snA, 10), numB = parseInt(snB, 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        if (!isNaN(numA)) return -1;
+        if (!isNaN(numB)) return 1;
+        return snA.localeCompare(snB);
     });
 }
 
@@ -767,7 +779,7 @@ window.deleteRepair = async function (id) {
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-// ========== OPTIMISED SEARCH (Algolia + local fallback) ==========
+// ========== OPTIMISED SEARCH (Algolia + local fallback) with ASCENDING SN sort ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -821,6 +833,8 @@ async function performSearch(query) {
                 return matchesTab && matchesFilter;
             });
         }
+        // Sort search results by SN ascending (smallest to largest)
+        hits = sortBySNDesc(hits);
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
         currentPage = 1;
@@ -832,7 +846,8 @@ async function performSearch(query) {
     } catch (err) {
         console.error("Algolia search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
-        const hits = smartLocalSearch(query, sourceData);
+        let hits = smartLocalSearch(query, sourceData);
+        hits = sortBySNDesc(hits);
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
         currentPage = 1;
