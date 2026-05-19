@@ -56,6 +56,7 @@ let currentlyEditingId = null;
 let unsubscribe = null;
 let currentSearchQuery = "";
 let searchDebounceTimer = null;
+let isLoading = false;
 
 // ========== PAGINATION (unified) ==========
 let currentPage = 1;
@@ -64,8 +65,6 @@ let totalFilteredItems = 0;
 let fullFilteredList = [];
 let isSearchActive = false;
 let searchFilteredList = [];
-let searchCurrentPage = 1;  // separate page for search results
-const searchItemsPerPage = 50;
 
 // ========== CENSORSHIP ==========
 let revenueCensored = true;
@@ -116,7 +115,7 @@ window.toggleDueCensor = function() {
 
 if ("Notification" in window) Notification.requestPermission();
 
-// ========== HELPER: Sort SN descending (for normal table view) ==========
+// ========== HELPER: Sort SN descending ==========
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -128,7 +127,7 @@ function sortBySNDesc(arr) {
     });
 }
 
-// ========== HELPER: Sort SN ascending (for search results) ==========
+// ========== HELPER: Sort SN ascending (kept for possible use) ==========
 function sortBySNAsc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -149,7 +148,6 @@ function adToBsYearMonth(adDate) {
         let month = nepDate.getMonth();
         if (isNaN(year)) year = 2080;
         if (isNaN(month)) month = 1;
-        // Ensure month is 1-12 (some libraries return 0-11)
         if (month >= 0 && month <= 11) month += 1;
         if (month < 1) month = 1;
         if (month > 12) month = 12;
@@ -178,7 +176,6 @@ function sendNotification(title, body) {
 
 // ========== AUTO SERIAL NUMBER ==========
 function getNextSerialNumber() {
-    // Use all repairs (full dataset, not filtered) to compute next SN
     const allRepairs = (currentView === 'month') ? fullMonthRepairs : repairs;
     let maxSN = 0;
     for (const r of allRepairs) {
@@ -190,18 +187,38 @@ function getNextSerialNumber() {
     return (maxSN + 1).toString();
 }
 
-// ========== LOCAL UPDATE HELPERS ==========
+// ========== LOCAL UPDATE HELPERS (optimized with Map) ==========
+let repairsMap = new Map();
+let fullMonthMap = new Map();
+let filteredMap = new Map();
+let searchMap = new Map();
+
+function rebuildMaps() {
+    repairsMap.clear();
+    repairs.forEach(r => repairsMap.set(r.id, r));
+    fullMonthMap.clear();
+    fullMonthRepairs.forEach(r => fullMonthMap.set(r.id, r));
+    filteredMap.clear();
+    fullFilteredList.forEach(r => filteredMap.set(r.id, r));
+    searchMap.clear();
+    searchFilteredList.forEach(r => searchMap.set(r.id, r));
+}
+
 function updateSearchResultLocally(updatedRepair) {
-    const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (index !== -1) displayedRepairs[index] = { ...displayedRepairs[index], ...updatedRepair };
-    const repairIndex = repairs.findIndex(r => r.id === updatedRepair.id);
-    if (repairIndex !== -1) repairs[repairIndex] = { ...repairs[repairIndex], ...updatedRepair };
-    const monthIndex = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (monthIndex !== -1) fullMonthRepairs[monthIndex] = { ...fullMonthRepairs[monthIndex], ...updatedRepair };
-    const filteredIndex = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (filteredIndex !== -1) fullFilteredList[filteredIndex] = { ...fullFilteredList[filteredIndex], ...updatedRepair };
-    const searchIndex = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (searchIndex !== -1) searchFilteredList[searchIndex] = { ...searchFilteredList[searchIndex], ...updatedRepair };
+    const idx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
+    if (idx !== -1) displayedRepairs[idx] = { ...displayedRepairs[idx], ...updatedRepair };
+    if (repairsMap.has(updatedRepair.id)) repairsMap.set(updatedRepair.id, updatedRepair);
+    const rIdx = repairs.findIndex(r => r.id === updatedRepair.id);
+    if (rIdx !== -1) repairs[rIdx] = updatedRepair;
+    if (fullMonthMap.has(updatedRepair.id)) fullMonthMap.set(updatedRepair.id, updatedRepair);
+    const mIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
+    if (mIdx !== -1) fullMonthRepairs[mIdx] = updatedRepair;
+    if (filteredMap.has(updatedRepair.id)) filteredMap.set(updatedRepair.id, updatedRepair);
+    const fIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (fIdx !== -1) fullFilteredList[fIdx] = updatedRepair;
+    if (searchMap.has(updatedRepair.id)) searchMap.set(updatedRepair.id, updatedRepair);
+    const sIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (sIdx !== -1) searchFilteredList[sIdx] = updatedRepair;
     renderTable(displayedRepairs);
 }
 
@@ -245,6 +262,7 @@ onAuthStateChanged(auth, (user) => {
             searchFilteredList = [];
             isSearchActive = false;
             currentPage = 1;
+            rebuildMaps();
             if (typeof window.applyFiltersAndRender === 'function') window.applyFiltersAndRender();
         }
     }
@@ -256,10 +274,12 @@ function getDayRange(date) {
     return { start, end };
 }
 
-// ========== LOAD DATA (optimised) ==========
+// ========== LOAD DATA ==========
 function loadData() {
     if (unsubscribe) unsubscribe();
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
+    isLoading = true;
+    showLoadingSpinner(true);
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         if (currentView === 'day') {
@@ -285,6 +305,7 @@ function loadData() {
             fullMonthRepairs = monthRepairs;
             repairs = monthRepairs;
         }
+        rebuildMaps();
         currentPage = 1;
         updateDateLabel();
         const searchInput = document.getElementById('searchInput');
@@ -296,10 +317,25 @@ function loadData() {
             applyFiltersAndRender();
         }
         updateStats();
+        isLoading = false;
+        showLoadingSpinner(false);
     });
 }
 
-// ========== FILTER & RENDER (optimised) ==========
+function showLoadingSpinner(show) {
+    const container = document.getElementById('loadMoreContainer');
+    if (container) {
+        if (show) {
+            container.innerHTML = '<div class="flex justify-center py-4"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>';
+        } else if (!isSearchActive && currentPage * itemsPerPage < totalFilteredItems) {
+            // can show load more button if needed (handled elsewhere)
+        } else {
+            container.innerHTML = '';
+        }
+    }
+}
+
+// ========== FILTER & RENDER ==========
 function applyFiltersAndRender() {
     if (isSearchActive) return;
     let sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
@@ -336,6 +372,8 @@ function applyFiltersAndRender() {
     }
     filtered = sortBySNDesc(filtered);
     fullFilteredList = filtered;
+    filteredMap.clear();
+    fullFilteredList.forEach(r => filteredMap.set(r.id, r));
     totalFilteredItems = fullFilteredList.length;
     const start = (currentPage - 1) * itemsPerPage;
     displayedRepairs = fullFilteredList.slice(start, start + itemsPerPage);
@@ -390,8 +428,7 @@ function resetPagination() {
     }
 }
 
-// ========== MATCHES CURRENT FILTERS (optimised) ==========
-const filterValueCache = new Map();
+// ========== MATCHES CURRENT FILTERS ==========
 function matchesCurrentFilters(repair) {
     const filterVal = document.getElementById('statusFilter')?.value || "all";
     const todayBS = getTodayBSDate();
@@ -528,7 +565,6 @@ window.toggleModal = function (id) {
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         document.body.style.overflow = 'hidden';
-        // If opening entry modal for new entry, pre-fill SN
         if (id === 'entryModal' && currentlyEditingId === null) {
             const snField = document.getElementById('snNumber');
             if (snField) {
@@ -616,13 +652,16 @@ function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
     });
 }
 
-// ========== OPTIMISED SMART LOCAL SEARCH ==========
+// ========== OPTIMISED SMART LOCAL SEARCH (limited for performance) ==========
 function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
     if (words.length === 0) return [];
-    
-    const scored = sourceArray.map(repair => {
+    // Limit search to first 500 entries for performance
+    let limit = 500;
+    if (query.length <= 3) limit = 200;
+    const limitedArray = sourceArray.slice(0, limit);
+    const scored = limitedArray.map(repair => {
         const fields = {
             date: (repair.date || '').toLowerCase(),
             customer: (repair.customer || '').toLowerCase(),
@@ -631,7 +670,6 @@ function smartLocalSearch(query, sourceArray) {
             phone: (repair.phone || '').toLowerCase(),
             issue: (repair.issue || '').toLowerCase()
         };
-        
         let totalScore = 0;
         for (let word of words) {
             let bestFieldScore = 0;
@@ -676,10 +714,8 @@ function smartLocalSearch(query, sourceArray) {
         }
         return { repair, score: totalScore };
     });
-    
     let results = scored.filter(item => item.score > 0).sort((a,b) => b.score - a.score);
     let final = results.map(item => item.repair);
-    
     const filterVal = document.getElementById('statusFilter')?.value || "all";
     const todayBS = getTodayBSDate();
     final = final.filter(r => {
@@ -801,7 +837,7 @@ window.deleteRepair = async function (id) {
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-// ========== OPTIMISED SEARCH (Algolia + local fallback) with DESCENDING SN sort ==========
+// ========== MAIN SEARCH (Algolia + local fallback) – CLIENT-SIDE PAGINATION ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -811,9 +847,11 @@ async function performSearch(query) {
         return;
     }
     isSearchActive = true;
+    showLoadingSpinner(true);
     try {
+        // Fetch a reasonable number of hits (e.g., 200) to enable client-side pagination
         const searchParams = {
-            hitsPerPage: 200,
+            hitsPerPage: 200,   // enough for up to 4 pages of 50
             typoTolerance: true,
             removeStopWords: true,
             ignorePlurals: true,
@@ -825,58 +863,57 @@ async function performSearch(query) {
         };
         const res = await algoliaIndex.search(query, searchParams);
         let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
-        
-        if (hits.length === 0) {
-            const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
-            hits = smartLocalSearch(query, sourceData);
-        } else {
-            const todayBS = getTodayBSDate();
-            hits = hits.filter(r => {
-                const filterVal = document.getElementById('statusFilter')?.value || "all";
-                const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
-                const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
-                const isUnpaid = (cost > 0 && paid < cost);
-                let matchesTab = false;
-                if (currentTab === 'all') matchesTab = true;
-                else if (currentTab === 'pending') matchesTab = (r.status !== 'completed' && r.status !== 'returned');
-                else if (currentTab === 'fixed') matchesTab = (r.status === 'completed');
-                else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
-                else matchesTab = true;
-                let matchesFilter = true;
-                if (filterVal === 'today') {
-                    matchesFilter = (r.date === todayBS);
-                } else if (filterVal === 'paid') {
-                    matchesFilter = isPaid;
-                } else if (filterVal === 'unpaid') {
-                    matchesFilter = isUnpaid;
-                } else if (filterVal !== 'all') {
-                    matchesFilter = r.status === filterVal;
-                }
-                return matchesTab && matchesFilter;
-            });
-        }
-        // Sort search results by SN descending (largest first) to match table view
+
+        // Apply tab & status filters
+        const todayBS = getTodayBSDate();
+        hits = hits.filter(r => {
+            const filterVal = document.getElementById('statusFilter')?.value || "all";
+            const cost = Number(r.cost) || 0, paid = Number(r.paid) || 0;
+            const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
+            const isUnpaid = (cost > 0 && paid < cost);
+            let matchesTab = false;
+            if (currentTab === 'all') matchesTab = true;
+            else if (currentTab === 'pending') matchesTab = (r.status !== 'completed' && r.status !== 'returned');
+            else if (currentTab === 'fixed') matchesTab = (r.status === 'completed');
+            else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
+            else matchesTab = true;
+            let matchesFilter = true;
+            if (filterVal === 'today') {
+                matchesFilter = (r.date === todayBS);
+            } else if (filterVal === 'paid') {
+                matchesFilter = isPaid;
+            } else if (filterVal === 'unpaid') {
+                matchesFilter = isUnpaid;
+            } else if (filterVal !== 'all') {
+                matchesFilter = r.status === filterVal;
+            }
+            return matchesTab && matchesFilter;
+        });
+        // Sort by SN descending
         hits = sortBySNDesc(hits);
         searchFilteredList = hits;
-        totalFilteredItems = searchFilteredList.length;
+        totalFilteredItems = hits.length;   // correct total after filters
         currentPage = 1;
-        displayedRepairs = searchFilteredList.slice(0, itemsPerPage);
+        const start = 0;
+        displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
         if (hits.length === 0) showToast(`No results for "${query}"`);
         else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
         console.error("Algolia search error:", err);
+        // Fallback to local smart search
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
         let hits = smartLocalSearch(query, sourceData);
-        hits = sortBySNDesc(hits);
         searchFilteredList = hits;
-        totalFilteredItems = searchFilteredList.length;
+        totalFilteredItems = hits.length;
         currentPage = 1;
-        displayedRepairs = searchFilteredList.slice(0, itemsPerPage);
+        displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
         showToast(`Search completed with ${hits.length} results (local smart search)`);
+    } finally {
+        showLoadingSpinner(false);
     }
 }
 
@@ -895,16 +932,10 @@ function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
     const noData = document.getElementById('noDataMessage');
     if (!tbody) return;
-    
-    // Clear existing content
     tbody.innerHTML = '';
     if (noData) noData.classList.toggle('hidden', data.length > 0);
-    
     if (data.length === 0) return;
-    
-    // Use DocumentFragment for better performance
     const fragment = document.createDocumentFragment();
-    
     data.forEach(repair => {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
         const tr = document.createElement('tr');
@@ -939,7 +970,7 @@ function renderTable(data = repairs) {
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
-             </td>
+             </table>
         `;
         fragment.appendChild(tr);
     });
@@ -1078,10 +1109,8 @@ window.onload = () => {
         try {
             let finalImageUrl = currentImageData;
             if (currentImageData && currentImageData.startsWith('data:image')) {
-                // Compress the image before upload
                 showToast("Compressing image...");
                 const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
-                // Convert data URL to Blob
                 const blob = await (await fetch(compressedDataUrl)).blob();
                 const formData = new FormData();
                 formData.append("image", blob, "repair.jpg");
