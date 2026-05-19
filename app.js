@@ -176,6 +176,20 @@ function sendNotification(title, body) {
     } catch(e) {}
 }
 
+// ========== AUTO SERIAL NUMBER ==========
+function getNextSerialNumber() {
+    // Use all repairs (full dataset, not filtered) to compute next SN
+    const allRepairs = (currentView === 'month') ? fullMonthRepairs : repairs;
+    let maxSN = 0;
+    for (const r of allRepairs) {
+        const num = parseInt(r.sn, 10);
+        if (!isNaN(num) && num > maxSN) {
+            maxSN = num;
+        }
+    }
+    return (maxSN + 1).toString();
+}
+
 // ========== LOCAL UPDATE HELPERS ==========
 function updateSearchResultLocally(updatedRepair) {
     const index = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
@@ -514,6 +528,14 @@ window.toggleModal = function (id) {
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         document.body.style.overflow = 'hidden';
+        // If opening entry modal for new entry, pre-fill SN
+        if (id === 'entryModal' && currentlyEditingId === null) {
+            const snField = document.getElementById('snNumber');
+            if (snField) {
+                const nextSN = getNextSerialNumber();
+                snField.value = nextSN;
+            }
+        }
     } else {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
@@ -779,7 +801,7 @@ window.deleteRepair = async function (id) {
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-// ========== OPTIMISED SEARCH (Algolia + local fallback) with ASCENDING SN sort ==========
+// ========== OPTIMISED SEARCH (Algolia + local fallback) with DESCENDING SN sort ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -833,7 +855,7 @@ async function performSearch(query) {
                 return matchesTab && matchesFilter;
             });
         }
-        // Sort search results by SN ascending (smallest to largest)
+        // Sort search results by SN descending (largest first) to match table view
         hits = sortBySNDesc(hits);
         searchFilteredList = hits;
         totalFilteredItems = searchFilteredList.length;
