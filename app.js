@@ -127,7 +127,7 @@ function sortBySNDesc(arr) {
     });
 }
 
-// ========== HELPER: Sort SN ascending (kept for possible use) ==========
+// ========== HELPER: Sort SN ascending ==========
 function sortBySNAsc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -657,7 +657,6 @@ function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
     if (words.length === 0) return [];
-    // Limit search to first 500 entries for performance
     let limit = 500;
     if (query.length <= 3) limit = 200;
     const limitedArray = sourceArray.slice(0, limit);
@@ -837,7 +836,7 @@ window.deleteRepair = async function (id) {
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
 
-// ========== MAIN SEARCH (Algolia + local fallback) – CLIENT-SIDE PAGINATION ==========
+// ========== SMART SEARCH (two logics) ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -849,9 +848,8 @@ async function performSearch(query) {
     isSearchActive = true;
     showLoadingSpinner(true);
     try {
-        // Fetch a reasonable number of hits (e.g., 200) to enable client-side pagination
         const searchParams = {
-            hitsPerPage: 200,   // enough for up to 4 pages of 50
+            hitsPerPage: 200,
             typoTolerance: true,
             removeStopWords: true,
             ignorePlurals: true,
@@ -889,22 +887,53 @@ async function performSearch(query) {
             }
             return matchesTab && matchesFilter;
         });
-        // Sort by SN descending
-        hits = sortBySNDesc(hits);
+
+        const trimmedQuery = query.trim();
+        const isNumericQuery = /^\d+$/.test(trimmedQuery); // only digits
+
+        if (isNumericQuery && hits.length > 0) {
+            // Numeric: exact SN match at top, then sort rest by SN descending
+            const exactIndex = hits.findIndex(r => r.sn === trimmedQuery);
+            if (exactIndex !== -1) {
+                const exactMatch = hits[exactIndex];
+                const remaining = hits.filter((_, idx) => idx !== exactIndex);
+                const sortedRemaining = sortBySNDesc(remaining);
+                hits = [exactMatch, ...sortedRemaining];
+            } else {
+                hits = sortBySNDesc(hits);
+            }
+        } else if (hits.length > 0) {
+            // Contains letters (non‑numeric) -> sort all by SN descending
+            hits = sortBySNDesc(hits);
+        }
+
         searchFilteredList = hits;
-        totalFilteredItems = hits.length;   // correct total after filters
+        totalFilteredItems = hits.length;
         currentPage = 1;
-        const start = 0;
-        displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
+        displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
         if (hits.length === 0) showToast(`No results for "${query}"`);
         else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
         console.error("Algolia search error:", err);
-        // Fallback to local smart search
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
         let hits = smartLocalSearch(query, sourceData);
+        const trimmedQuery = query.trim();
+        const isNumericQuery = /^\d+$/.test(trimmedQuery);
+        if (isNumericQuery && hits.length > 0) {
+            const exactIndex = hits.findIndex(r => r.sn === trimmedQuery);
+            if (exactIndex !== -1) {
+                const exactMatch = hits[exactIndex];
+                const remaining = hits.filter((_, idx) => idx !== exactIndex);
+                const sortedRemaining = sortBySNDesc(remaining);
+                hits = [exactMatch, ...sortedRemaining];
+            } else {
+                hits = sortBySNDesc(hits);
+            }
+        } else if (hits.length > 0) {
+            hits = sortBySNDesc(hits);
+        }
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
         currentPage = 1;
@@ -970,7 +999,7 @@ function renderTable(data = repairs) {
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
-             </table>
+             </td>
         `;
         fragment.appendChild(tr);
     });
