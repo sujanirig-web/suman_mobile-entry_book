@@ -1,48 +1,12 @@
-// 1. FIREBASE and algolia IMPORTS 
-import algoliasearch from 'https://cdn.jsdelivr.net/npm/algoliasearch@4.22.1/dist/algoliasearch.esm.browser.js';
+//app.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-const firebaseConfig = {
-    apiKey: "AIzaSyDFEwq_evYAot2DEtErBO58u6ABWBjVZ5M",
-    authDomain: "relife-entry-book.firebaseapp.com",
-    projectId: "relife-entry-book",
-    storageBucket: "relife-entry-book.firebasestorage.app",
-    messagingSenderId: "736685646269",
-    appId: "1:736685646269:web:387441b954cd4f123f72d4"
-};
+const WORKER_URL = 'https://relife-api-proxy.sujanirig.workers.dev';
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth();
-const algoliaClient = algoliasearch(
-    "SRL627FPXS",
-    "a794f93efc346a4a17d20fcebff54ad6"
-);
-const algoliaIndex = algoliaClient.initIndex("repairs");
+let db, auth, algoliaAppId;
 
-// ========== Update index settings ==========
-(async function configureAlgolia() {
-    try {
-        await algoliaIndex.setSettings({
-            searchableAttributes: ['date', 'customer', 'device', 'sn', 'phone', 'issue'],
-            attributesToHighlight: ['date', 'customer', 'device', 'sn', 'phone'],
-            customRanking: ['desc(paid)'],
-            typoTolerance: true,
-            removeStopWords: true,
-            ignorePlurals: true,
-            advancedSyntax: true,
-            exactOnSingleWordQuery: 'attribute',
-            ranking: ['typo', 'geo', 'words', 'filters', 'proximity', 'attribute', 'exact', 'custom']
-        });
-        console.log("✅ Algolia index settings updated");
-    } catch (e) {
-        console.warn("Could not update Algolia settings:", e);
-    }
-})();
-
-// ========== GLOBAL STATE ==========
 let displayedRepairs = [];
 let repairs = [];
 let fullMonthRepairs = [];
@@ -58,7 +22,6 @@ let currentSearchQuery = "";
 let searchDebounceTimer = null;
 let isLoading = false;
 
-// ========== PAGINATION (unified) ==========
 let currentPage = 1;
 const itemsPerPage = 50;
 let totalFilteredItems = 0;
@@ -66,7 +29,6 @@ let fullFilteredList = [];
 let isSearchActive = false;
 let searchFilteredList = [];
 
-// ========== CENSORSHIP ==========
 let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
@@ -115,7 +77,7 @@ window.toggleDueCensor = function() {
 
 if ("Notification" in window) Notification.requestPermission();
 
-// ========== HELPER: Sort SN descending ==========
+
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -127,7 +89,6 @@ function sortBySNDesc(arr) {
     });
 }
 
-// ========== HELPER: Sort SN ascending ==========
 function sortBySNAsc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -139,7 +100,7 @@ function sortBySNAsc(arr) {
     });
 }
 
-// ========== NEPALI DATE HELPERS ==========
+
 function adToBsYearMonth(adDate) {
     try {
         if (typeof window.NepaliDate !== 'function') return { year: 2080, month: 1 };
@@ -174,7 +135,7 @@ function sendNotification(title, body) {
     } catch(e) {}
 }
 
-// ========== AUTO SERIAL NUMBER ==========
+
 function getNextSerialNumber() {
     const allRepairs = (currentView === 'month') ? fullMonthRepairs : repairs;
     let maxSN = 0;
@@ -187,7 +148,7 @@ function getNextSerialNumber() {
     return (maxSN + 1).toString();
 }
 
-// ========== LOCAL UPDATE HELPERS (optimized with Map) ==========
+
 let repairsMap = new Map();
 let fullMonthMap = new Map();
 let filteredMap = new Map();
@@ -244,29 +205,48 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     setTimeout(() => pendingLogs.delete(key), 10000);
 }
 
-// ========== AUTH ==========
-onAuthStateChanged(auth, (user) => {
-    const overlay = document.getElementById('loginOverlay');
-    if (overlay) {
-        if (user) {
-            overlay.style.display = 'none';
-            const { year, month } = adToBsYearMonth(new Date());
-            currentNepaliYear = Number(year);
-            currentNepaliMonth = Number(month);
-            loadData();
-        } else {
-            overlay.style.display = 'flex';
-            repairs = [];
-            displayedRepairs = [];
-            fullFilteredList = [];
-            searchFilteredList = [];
-            isSearchActive = false;
-            currentPage = 1;
-            rebuildMaps();
-            if (typeof window.applyFiltersAndRender === 'function') window.applyFiltersAndRender();
+async function loadConfig() {
+    const res = await fetch(`${WORKER_URL}/config`);
+    if (!res.ok) throw new Error("Failed to load configuration");
+    const config = await res.json();
+
+    const firebaseConfig = {
+        apiKey: config.firebaseApiKey,
+        authDomain: config.firebaseAuthDomain,
+        projectId: config.firebaseProjectId,
+        storageBucket: "relife-entry-book.firebasestorage.app",
+        messagingSenderId: "736685646269",
+        appId: "1:736685646269:web:387441b954cd4f123f72d4"
+    };
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth();
+    algoliaAppId = config.algoliaAppId;
+
+    
+    onAuthStateChanged(auth, (user) => {
+        const overlay = document.getElementById('loginOverlay');
+        if (overlay) {
+            if (user) {
+                overlay.style.display = 'none';
+                const { year, month } = adToBsYearMonth(new Date());
+                currentNepaliYear = Number(year);
+                currentNepaliMonth = Number(month);
+                loadData();
+            } else {
+                overlay.style.display = 'flex';
+                repairs = [];
+                displayedRepairs = [];
+                fullFilteredList = [];
+                searchFilteredList = [];
+                isSearchActive = false;
+                currentPage = 1;
+                rebuildMaps();
+                if (typeof window.applyFiltersAndRender === 'function') window.applyFiltersAndRender();
+            }
         }
-    }
-});
+    });
+}
 
 function getDayRange(date) {
     const start = new Date(date); start.setHours(0,0,0,0);
@@ -274,7 +254,6 @@ function getDayRange(date) {
     return { start, end };
 }
 
-// ========== LOAD DATA ==========
 function loadData() {
     if (unsubscribe) unsubscribe();
     const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
@@ -328,14 +307,13 @@ function showLoadingSpinner(show) {
         if (show) {
             container.innerHTML = '<div class="flex justify-center py-4"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>';
         } else if (!isSearchActive && currentPage * itemsPerPage < totalFilteredItems) {
-            // can show load more button if needed (handled elsewhere)
+            
         } else {
             container.innerHTML = '';
         }
     }
 }
 
-// ========== FILTER & RENDER ==========
 function applyFiltersAndRender() {
     if (isSearchActive) return;
     let sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
@@ -426,37 +404,6 @@ function resetPagination() {
     } else {
         applyFiltersAndRender();
     }
-}
-
-// ========== MATCHES CURRENT FILTERS ==========
-function matchesCurrentFilters(repair) {
-    const filterVal = document.getElementById('statusFilter')?.value || "all";
-    const todayBS = getTodayBSDate();
-    const cost = Number(repair.cost) || 0, paid = Number(repair.paid) || 0;
-    const isPaid = (cost > 0 && paid >= cost) || (cost === 0 && paid > 0);
-    const isUnpaid = (cost > 0 && paid < cost);
-    let matchesTab = false;
-    if (currentTab === 'all') matchesTab = true;
-    else if (currentTab === 'pending') matchesTab = (repair.status !== 'completed' && repair.status !== 'returned');
-    else if (currentTab === 'fixed') matchesTab = (repair.status === 'completed');
-    else if (currentTab === 'returned') matchesTab = (repair.status === 'returned');
-    else matchesTab = true;
-    let matchesFilter = true;
-    if (filterVal === 'today') {
-        matchesFilter = (repair.date === todayBS);
-    } else if (filterVal === 'paid') {
-        matchesFilter = isPaid;
-    } else if (filterVal === 'unpaid') {
-        matchesFilter = isUnpaid;
-    } else if (filterVal !== 'all') {
-        matchesFilter = repair.status === filterVal;
-    }
-    let matchesText = true;
-    if (currentSearchQuery.length >= 2) {
-        const text = `${repair.customer||''} ${repair.device||''} ${repair.sn||''} ${repair.phone||''} ${repair.issue||''} ${repair.date||''}`.toLowerCase();
-        matchesText = text.includes(currentSearchQuery.toLowerCase());
-    }
-    return matchesTab && matchesFilter && matchesText;
 }
 
 function updateDateLabel() {
@@ -556,7 +503,6 @@ window.toggleViewMode = function () {
     if (icon) icon.classList.toggle('rotate-180');
 };
 
-// ========== MODAL, IMAGE, TOAST ==========
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
     if (!modal) return;
@@ -630,7 +576,6 @@ window.jumpToRepairDateById = function (id) {
     if (r) window.jumpToRepairDate(r);
 };
 
-// ========== IMAGE COMPRESSION HELPER ==========
 function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
     return new Promise((resolve) => {
         const img = new Image();
@@ -652,7 +597,6 @@ function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
     });
 }
 
-// ========== OPTIMISED SMART LOCAL SEARCH (limited for performance) ==========
 function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
@@ -742,101 +686,12 @@ function smartLocalSearch(query, sourceArray) {
     return final;
 }
 
-// ========== REFRESH SEARCH ==========
 async function refreshIfSearchActive() {
     if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
         await performSearch(currentSearchQuery);
     }
 }
 
-// ========== STATUS MANAGEMENT ==========
-window.updateStatus = async function (id) {
-    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
-    if (!repair) { showToast("Repair not found", true); return; }
-    const currentStatus = repair.status || 'pending';
-    let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
-    try {
-        await updateDoc(doc(db, "repairs", id), { status: nextStatus });
-        await algoliaIndex.partialUpdateObject({ objectID: id, status: nextStatus });
-        showToast(`Status changed to ${nextStatus}`);
-        const updatedRepair = { ...repair, status: nextStatus };
-        updateSearchResultLocally(updatedRepair);
-        if (currentView === 'month') {
-            const idx = fullMonthRepairs.findIndex(r => r.id === id);
-            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
-        } else {
-            const idx = repairs.findIndex(r => r.id === id);
-            if (idx !== -1) repairs[idx] = updatedRepair;
-        }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
-        updateStats();
-    } catch (err) { console.error(err); alert("Failed to update status"); }
-};
-
-window.markAsReturned = async function (id) {
-    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
-    if (!repair) { showToast("Repair not found", true); return; }
-    if (repair.status === 'returned') { showToast("Already marked as returned"); return; }
-    try {
-        await updateDoc(doc(db, "repairs", id), { status: 'returned' });
-        await algoliaIndex.partialUpdateObject({ objectID: id, status: 'returned' });
-        showToast(`Marked as returned`);
-        const updatedRepair = { ...repair, status: 'returned' };
-        updateSearchResultLocally(updatedRepair);
-        if (currentView === 'month') {
-            const idx = fullMonthRepairs.findIndex(r => r.id === id);
-            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
-        } else {
-            const idx = repairs.findIndex(r => r.id === id);
-            if (idx !== -1) repairs[idx] = updatedRepair;
-        }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
-        updateStats();
-    } catch (err) { console.error(err); alert("Failed to mark as returned"); }
-};
-
-window.editRepair = function (id) {
-    const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
-    if (!repair) return;
-    currentlyEditingId = id;
-    document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
-    document.getElementById('customerName').value = repair.customer || '';
-    document.getElementById('customerPhone').value = repair.phone || '';
-    document.getElementById('deviceModel').value = repair.device || '';
-    document.getElementById('snNumber').value = repair.sn || '';
-    document.getElementById('issueType').value = repair.issue || '';
-    document.getElementById('cost').value = repair.cost || 0;
-    document.getElementById('paid').value = repair.paid || 0;
-    document.getElementById('devicePassword').value = repair.password || '';
-    currentImageData = repair.image || null;
-    const previewImg = document.getElementById('previewImg');
-    const previewDiv = document.getElementById('imagePreview');
-    if (repair.image) { previewImg.src = repair.image; previewDiv.classList.remove('hidden'); }
-    else { previewDiv.classList.add('hidden'); }
-    window.toggleModal('entryModal');
-};
-
-window.deleteRepair = async function (id) {
-    if (!confirm("Delete this entry?")) return;
-    try {
-        await deleteDoc(doc(db, "repairs", id));
-        await algoliaIndex.deleteObject(id);
-        showToast("Deleted successfully");
-        if (currentView === 'month') {
-            fullMonthRepairs = fullMonthRepairs.filter(r => r.id !== id);
-            repairs = fullMonthRepairs;
-        } else {
-            repairs = repairs.filter(r => r.id !== id);
-        }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
-        updateStats();
-    } catch (err) { console.error(err); alert("Delete failed"); }
-};
-
-// ========== SMART SEARCH (two logics) ==========
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -848,21 +703,15 @@ async function performSearch(query) {
     isSearchActive = true;
     showLoadingSpinner(true);
     try {
-        const searchParams = {
-            hitsPerPage: 200,
-            typoTolerance: true,
-            removeStopWords: true,
-            ignorePlurals: true,
-            advancedSyntax: true,
-            exactOnSingleWordQuery: 'attribute',
-            query: query,
-            restrictSearchableAttributes: ['date', 'customer', 'device', 'sn', 'phone', 'issue'],
-            optionalWords: ['/', '-']
-        };
-        const res = await algoliaIndex.search(query, searchParams);
+        const response = await fetch(`${WORKER_URL}/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, page: 0, hitsPerPage: 200 })
+        });
+        if (!response.ok) throw new Error(`Worker search failed: ${response.status}`);
+        const res = await response.json();
         let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
 
-        // Apply tab & status filters
         const todayBS = getTodayBSDate();
         hits = hits.filter(r => {
             const filterVal = document.getElementById('statusFilter')?.value || "all";
@@ -889,10 +738,8 @@ async function performSearch(query) {
         });
 
         const trimmedQuery = query.trim();
-        const isNumericQuery = /^\d+$/.test(trimmedQuery); // only digits
-
+        const isNumericQuery = /^\d+$/.test(trimmedQuery);
         if (isNumericQuery && hits.length > 0) {
-            // Numeric: exact SN match at top, then sort rest by SN descending
             const exactIndex = hits.findIndex(r => r.sn === trimmedQuery);
             if (exactIndex !== -1) {
                 const exactMatch = hits[exactIndex];
@@ -903,7 +750,6 @@ async function performSearch(query) {
                 hits = sortBySNDesc(hits);
             }
         } else if (hits.length > 0) {
-            // Contains letters (non‑numeric) -> sort all by SN descending
             hits = sortBySNDesc(hits);
         }
 
@@ -916,7 +762,7 @@ async function performSearch(query) {
         if (hits.length === 0) showToast(`No results for "${query}"`);
         else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
-        console.error("Algolia search error:", err);
+        console.error("Worker search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
         let hits = smartLocalSearch(query, sourceData);
         const trimmedQuery = query.trim();
@@ -940,7 +786,7 @@ async function performSearch(query) {
         displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
-        showToast(`Search completed with ${hits.length} results (local smart search)`);
+        showToast(`Search completed with ${hits.length} results (local backup)`);
     } finally {
         showLoadingSpinner(false);
     }
@@ -956,7 +802,6 @@ function onSearchInput() {
     }, 300);
 }
 
-// ========== OPTIMISED TABLE RENDERING (DocumentFragment) ==========
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
     const noData = document.getElementById('noDataMessage');
@@ -1088,8 +933,98 @@ function toggleLogoMenu() {
 }
 window.toggleLogoMenu = toggleLogoMenu;
 
-// ========== ON PAGE LOAD ==========
-window.onload = () => {
+window.updateStatus = async function (id) {
+    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
+    if (!repair) { showToast("Repair not found", true); return; }
+    const currentStatus = repair.status || 'pending';
+    let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
+    try {
+        await updateDoc(doc(db, "repairs", id), { status: nextStatus });
+        showToast(`Status changed to ${nextStatus}`);
+        const updatedRepair = { ...repair, status: nextStatus };
+        updateSearchResultLocally(updatedRepair);
+        if (currentView === 'month') {
+            const idx = fullMonthRepairs.findIndex(r => r.id === id);
+            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
+        } else {
+            const idx = repairs.findIndex(r => r.id === id);
+            if (idx !== -1) repairs[idx] = updatedRepair;
+        }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
+        updateStats();
+    } catch (err) { console.error(err); alert("Failed to update status"); }
+};
+
+window.markAsReturned = async function (id) {
+    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
+    if (!repair) { showToast("Repair not found", true); return; }
+    if (repair.status === 'returned') { showToast("Already marked as returned"); return; }
+    try {
+        await updateDoc(doc(db, "repairs", id), { status: 'returned' });
+        showToast(`Marked as returned`);
+        const updatedRepair = { ...repair, status: 'returned' };
+        updateSearchResultLocally(updatedRepair);
+        if (currentView === 'month') {
+            const idx = fullMonthRepairs.findIndex(r => r.id === id);
+            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
+        } else {
+            const idx = repairs.findIndex(r => r.id === id);
+            if (idx !== -1) repairs[idx] = updatedRepair;
+        }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
+        updateStats();
+    } catch (err) { console.error(err); alert("Failed to mark as returned"); }
+};
+
+window.editRepair = function (id) {
+    const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    if (!repair) return;
+    currentlyEditingId = id;
+    document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
+    document.getElementById('customerName').value = repair.customer || '';
+    document.getElementById('customerPhone').value = repair.phone || '';
+    document.getElementById('deviceModel').value = repair.device || '';
+    document.getElementById('snNumber').value = repair.sn || '';
+    document.getElementById('issueType').value = repair.issue || '';
+    document.getElementById('cost').value = repair.cost || 0;
+    document.getElementById('paid').value = repair.paid || 0;
+    document.getElementById('devicePassword').value = repair.password || '';
+    currentImageData = repair.image || null;
+    const previewImg = document.getElementById('previewImg');
+    const previewDiv = document.getElementById('imagePreview');
+    if (repair.image) { previewImg.src = repair.image; previewDiv.classList.remove('hidden'); }
+    else { previewDiv.classList.add('hidden'); }
+    window.toggleModal('entryModal');
+};
+
+window.deleteRepair = async function (id) {
+    if (!confirm("Delete this entry?")) return;
+    try {
+        await deleteDoc(doc(db, "repairs", id));
+        showToast("Deleted successfully");
+        if (currentView === 'month') {
+            fullMonthRepairs = fullMonthRepairs.filter(r => r.id !== id);
+            repairs = fullMonthRepairs;
+        } else {
+            repairs = repairs.filter(r => r.id !== id);
+        }
+        await refreshIfSearchActive();
+        if (!isSearchActive) applyFiltersAndRender();
+        updateStats();
+    } catch (err) { console.error(err); alert("Delete failed"); }
+};
+
+
+window.onload = async () => {
+    try {
+        await loadConfig();
+    } catch (err) {
+        console.error("Failed to load config:", err);
+        alert("Unable to load application configuration. Please check your network and try again.");
+        return;
+    }
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
         loginBtn.onclick = async () => {
@@ -1143,13 +1078,15 @@ window.onload = () => {
                 const blob = await (await fetch(compressedDataUrl)).blob();
                 const formData = new FormData();
                 formData.append("image", blob, "repair.jpg");
-                showToast("SAVING TO ENTRYBOOK...");
-                const res = await fetch(`https://api.imgbb.com/1/upload?key=50e3528b32a0303dab2a1de6244e6198`, {
+                showToast("Uploading to ImgBB...");
+            
+                const res = await fetch(`${WORKER_URL}/upload`, {
                     method: "POST",
                     body: formData
                 });
                 const result = await res.json();
                 if (result.success) finalImageUrl = result.data.url;
+                else throw new Error("ImgBB upload failed");
             }
             let costVal = Number(document.getElementById('cost').value) || 0;
             let paidVal = Number(document.getElementById('paid').value) || 0;
@@ -1180,7 +1117,6 @@ window.onload = () => {
                 }
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
-                await algoliaIndex.partialUpdateObject({ objectID: currentlyEditingId, ...updatedData });
                 showToast("Updated successfully");
                 if (currentView === 'month') {
                     const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
@@ -1204,8 +1140,7 @@ window.onload = () => {
                     } else finalDateStr = selectedDate.toLocaleDateString();
                 } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
                 const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
-                const docRef = await addDoc(collection(db, "repairs"), newEntry);
-                await algoliaIndex.saveObject({ objectID: docRef.id, ...newEntry });
+                await addDoc(collection(db, "repairs"), newEntry);
                 showToast("Repair added");
                 await refreshIfSearchActive();
                 if (!isSearchActive) applyFiltersAndRender();
@@ -1221,13 +1156,4 @@ window.onload = () => {
             isSubmitting = false;
         }
     };
-};
-
-window.syncAllToAlgolia = async function () {
-    console.log("🔥 Syncing ALL Firebase data to Algolia...");
-    const snapshot = await getDocs(collection(db, "repairs"));
-    const batch = [];
-    snapshot.forEach(docSnap => batch.push({ objectID: docSnap.id, ...docSnap.data() }));
-    await algoliaIndex.saveObjects(batch);
-    console.log("✅ Sync complete:", batch.length);
 };
