@@ -77,7 +77,6 @@ window.toggleDueCensor = function() {
 
 if ("Notification" in window) Notification.requestPermission();
 
-
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
         const snA = a.sn || '', snB = b.sn || '';
@@ -99,7 +98,6 @@ function sortBySNAsc(arr) {
         return snA.localeCompare(snB);
     });
 }
-
 
 function adToBsYearMonth(adDate) {
     try {
@@ -135,7 +133,6 @@ function sendNotification(title, body) {
     } catch(e) {}
 }
 
-
 function getNextSerialNumber() {
     const allRepairs = (currentView === 'month') ? fullMonthRepairs : repairs;
     let maxSN = 0;
@@ -147,7 +144,6 @@ function getNextSerialNumber() {
     }
     return (maxSN + 1).toString();
 }
-
 
 let repairsMap = new Map();
 let fullMonthMap = new Map();
@@ -223,7 +219,6 @@ async function loadConfig() {
     auth = getAuth();
     algoliaAppId = config.algoliaAppId;
 
-    
     onAuthStateChanged(auth, (user) => {
         const overlay = document.getElementById('loginOverlay');
         if (overlay) {
@@ -940,8 +935,14 @@ window.updateStatus = async function (id) {
     let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
     try {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
-        showToast(`Status changed to ${nextStatus}`);
+        // Sync to Algolia
         const updatedRepair = { ...repair, status: nextStatus };
+        await fetch(`${WORKER_URL}/update-algolia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ objectID: id, ...updatedRepair })
+        }).catch(e => console.warn("Algolia sync failed", e));
+        showToast(`Status changed to ${nextStatus}`);
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
             const idx = fullMonthRepairs.findIndex(r => r.id === id);
@@ -962,8 +963,13 @@ window.markAsReturned = async function (id) {
     if (repair.status === 'returned') { showToast("Already marked as returned"); return; }
     try {
         await updateDoc(doc(db, "repairs", id), { status: 'returned' });
-        showToast(`Marked as returned`);
         const updatedRepair = { ...repair, status: 'returned' };
+        await fetch(`${WORKER_URL}/update-algolia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ objectID: id, ...updatedRepair })
+        }).catch(e => console.warn("Algolia sync failed", e));
+        showToast(`Marked as returned`);
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
             const idx = fullMonthRepairs.findIndex(r => r.id === id);
@@ -1003,6 +1009,11 @@ window.deleteRepair = async function (id) {
     if (!confirm("Delete this entry?")) return;
     try {
         await deleteDoc(doc(db, "repairs", id));
+        await fetch(`${WORKER_URL}/delete-algolia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ objectID: id })
+        }).catch(e => console.warn("Algolia delete failed", e));
         showToast("Deleted successfully");
         if (currentView === 'month') {
             fullMonthRepairs = fullMonthRepairs.filter(r => r.id !== id);
@@ -1015,7 +1026,6 @@ window.deleteRepair = async function (id) {
         updateStats();
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
-
 
 window.onload = async () => {
     try {
@@ -1079,7 +1089,6 @@ window.onload = async () => {
                 const formData = new FormData();
                 formData.append("image", blob, "repair.jpg");
                 showToast("Uploading to ImgBB...");
-            
                 const res = await fetch(`${WORKER_URL}/upload`, {
                     method: "POST",
                     body: formData
@@ -1117,6 +1126,12 @@ window.onload = async () => {
                 }
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
+                // Sync to Algolia
+                await fetch(`${WORKER_URL}/update-algolia`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ objectID: currentlyEditingId, ...updatedData })
+                }).catch(e => console.warn("Algolia sync failed", e));
                 showToast("Updated successfully");
                 if (currentView === 'month') {
                     const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
@@ -1140,7 +1155,13 @@ window.onload = async () => {
                     } else finalDateStr = selectedDate.toLocaleDateString();
                 } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
                 const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
-                await addDoc(collection(db, "repairs"), newEntry);
+                const docRef = await addDoc(collection(db, "repairs"), newEntry);
+                // Sync to Algolia
+                await fetch(`${WORKER_URL}/update-algolia`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ objectID: docRef.id, ...newEntry })
+                }).catch(e => console.warn("Algolia sync failed", e));
                 showToast("Repair added");
                 await refreshIfSearchActive();
                 if (!isSearchActive) applyFiltersAndRender();
