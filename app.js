@@ -34,6 +34,77 @@ let dueCensored = true;
 let revenueTimer = null;
 let dueTimer = null;
 
+// ========== RELIABLE ALGOLIA SYNC ==========
+async function syncToAlgolia(objectID, data) {
+    try {
+        console.log(`🔄 Syncing to Algolia: ${objectID}`);
+        const response = await fetch(`${WORKER_URL}/update-algolia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ objectID, ...data })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ Algolia sync failed for ${objectID}:`, errorText);
+            return false;
+        }
+        console.log(`✅ Synced to Algolia: ${objectID}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Network error syncing ${objectID}:`, error);
+        return false;
+    }
+}
+
+async function deleteFromAlgolia(objectID) {
+    try {
+        console.log(`🔄 Deleting from Algolia: ${objectID}`);
+        const response = await fetch(`${WORKER_URL}/delete-algolia`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ objectID })
+        });
+        if (!response.ok) {
+            console.error(`❌ Algolia delete failed for ${objectID}`);
+            return false;
+        }
+        console.log(`✅ Deleted from Algolia: ${objectID}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Network error deleting ${objectID}:`, error);
+        return false;
+    }
+}
+
+// ========== REFRESH SEARCH WITH 3 RETRIES ==========
+async function refreshCurrentView(editedId = null, retryCount = 0) {
+    if (!isSearchActive || !currentSearchQuery || currentSearchQuery.length < 2) {
+        applyFiltersAndRender();
+        return;
+    }
+    
+    const maxRetries = 3;
+    const delay = retryCount === 0 ? 500 : 800;
+    
+    console.log(`🔄 Refreshing search (attempt ${retryCount + 1}/${maxRetries}) for "${currentSearchQuery}"`);
+    await new Promise(r => setTimeout(r, delay));
+    await performSearch(currentSearchQuery);
+    
+    // If we know which ID was edited, check if it's now in the displayed results
+    if (editedId && displayedRepairs.some(r => r.id === editedId)) {
+        console.log(`✅ Updated record ${editedId} found in search results`);
+        return;
+    }
+    
+    // If not found and we haven't exhausted retries, try again
+    if (retryCount < maxRetries - 1) {
+        await refreshCurrentView(editedId, retryCount + 1);
+    } else {
+        console.warn(`⚠️ Could not find updated record after ${maxRetries} attempts`);
+        showToast("Update saved, but search may take a moment to reflect changes.");
+    }
+}
+
 function censorRevenue() {
     const revenueEl = document.getElementById('stat-revenue');
     if (revenueEl) revenueEl.classList.add('blur-strong');
@@ -164,18 +235,23 @@ function rebuildMaps() {
 function updateSearchResultLocally(updatedRepair) {
     const idx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
     if (idx !== -1) displayedRepairs[idx] = { ...displayedRepairs[idx], ...updatedRepair };
+    
     if (repairsMap.has(updatedRepair.id)) repairsMap.set(updatedRepair.id, updatedRepair);
     const rIdx = repairs.findIndex(r => r.id === updatedRepair.id);
     if (rIdx !== -1) repairs[rIdx] = updatedRepair;
+    
     if (fullMonthMap.has(updatedRepair.id)) fullMonthMap.set(updatedRepair.id, updatedRepair);
     const mIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
     if (mIdx !== -1) fullMonthRepairs[mIdx] = updatedRepair;
+    
     if (filteredMap.has(updatedRepair.id)) filteredMap.set(updatedRepair.id, updatedRepair);
     const fIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
     if (fIdx !== -1) fullFilteredList[fIdx] = updatedRepair;
+    
     if (searchMap.has(updatedRepair.id)) searchMap.set(updatedRepair.id, updatedRepair);
     const sIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
     if (sIdx !== -1) searchFilteredList[sIdx] = updatedRepair;
+    
     renderTable(displayedRepairs);
 }
 
@@ -681,12 +757,6 @@ function smartLocalSearch(query, sourceArray) {
     return final;
 }
 
-async function refreshIfSearchActive() {
-    if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
-        await performSearch(currentSearchQuery);
-    }
-}
-
 async function performSearch(query) {
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
@@ -935,14 +1005,10 @@ window.updateStatus = async function (id) {
     let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
     try {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
-        // Sync to Algolia
         const updatedRepair = { ...repair, status: nextStatus };
-        await fetch(`${WORKER_URL}/update-algolia`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ objectID: id, ...updatedRepair })
-        }).catch(e => console.warn("Algolia sync failed", e));
-        showToast(`Status changed to ${nextStatus}`);
+        await syncToAlgolia(id, updatedRepair);
+        showToast(`Status changed to ${nextStatus} (synced)`);
+        
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
             const idx = fullMonthRepairs.findIndex(r => r.id === id);
@@ -951,8 +1017,8 @@ window.updateStatus = async function (id) {
             const idx = repairs.findIndex(r => r.id === id);
             if (idx !== -1) repairs[idx] = updatedRepair;
         }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
+        
+        await refreshCurrentView(id);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to update status"); }
 };
@@ -964,12 +1030,9 @@ window.markAsReturned = async function (id) {
     try {
         await updateDoc(doc(db, "repairs", id), { status: 'returned' });
         const updatedRepair = { ...repair, status: 'returned' };
-        await fetch(`${WORKER_URL}/update-algolia`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ objectID: id, ...updatedRepair })
-        }).catch(e => console.warn("Algolia sync failed", e));
-        showToast(`Marked as returned`);
+        await syncToAlgolia(id, updatedRepair);
+        showToast(`Marked as returned (synced)`);
+        
         updateSearchResultLocally(updatedRepair);
         if (currentView === 'month') {
             const idx = fullMonthRepairs.findIndex(r => r.id === id);
@@ -978,8 +1041,8 @@ window.markAsReturned = async function (id) {
             const idx = repairs.findIndex(r => r.id === id);
             if (idx !== -1) repairs[idx] = updatedRepair;
         }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
+        
+        await refreshCurrentView(id);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to mark as returned"); }
 };
@@ -1009,20 +1072,15 @@ window.deleteRepair = async function (id) {
     if (!confirm("Delete this entry?")) return;
     try {
         await deleteDoc(doc(db, "repairs", id));
-        await fetch(`${WORKER_URL}/delete-algolia`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ objectID: id })
-        }).catch(e => console.warn("Algolia delete failed", e));
-        showToast("Deleted successfully");
+        await deleteFromAlgolia(id);
+        showToast("Deleted successfully (synced)");
         if (currentView === 'month') {
             fullMonthRepairs = fullMonthRepairs.filter(r => r.id !== id);
             repairs = fullMonthRepairs;
         } else {
             repairs = repairs.filter(r => r.id !== id);
         }
-        await refreshIfSearchActive();
-        if (!isSearchActive) applyFiltersAndRender();
+        await refreshCurrentView();
         updateStats();
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
@@ -1030,6 +1088,7 @@ window.deleteRepair = async function (id) {
 window.onload = async () => {
     try {
         await loadConfig();
+        console.log("✅ Config loaded, Algolia sync ready");
     } catch (err) {
         console.error("Failed to load config:", err);
         alert("Unable to load application configuration. Please check your network and try again.");
@@ -1126,13 +1185,9 @@ window.onload = async () => {
                 }
                 const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
-                // Sync to Algolia
-                await fetch(`${WORKER_URL}/update-algolia`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ objectID: currentlyEditingId, ...updatedData })
-                }).catch(e => console.warn("Algolia sync failed", e));
-                showToast("Updated successfully");
+                await syncToAlgolia(currentlyEditingId, updatedData);
+                showToast("Updated successfully (synced)");
+                
                 if (currentView === 'month') {
                     const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
                     if (idx !== -1) fullMonthRepairs[idx] = { ...fullMonthRepairs[idx], ...updatedData };
@@ -1140,8 +1195,8 @@ window.onload = async () => {
                     const idx = repairs.findIndex(r => r.id === currentlyEditingId);
                     if (idx !== -1) repairs[idx] = { ...repairs[idx], ...updatedData };
                 }
-                await refreshIfSearchActive();
-                if (!isSearchActive) applyFiltersAndRender();
+                
+                await refreshCurrentView(currentlyEditingId);
                 updateStats();
             } else {
                 let selectedDate = (currentView === 'day') ? new Date(currentDate) : new Date();
@@ -1156,15 +1211,9 @@ window.onload = async () => {
                 } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
                 const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
-                // Sync to Algolia
-                await fetch(`${WORKER_URL}/update-algolia`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ objectID: docRef.id, ...newEntry })
-                }).catch(e => console.warn("Algolia sync failed", e));
-                showToast("Repair added");
-                await refreshIfSearchActive();
-                if (!isSearchActive) applyFiltersAndRender();
+                await syncToAlgolia(docRef.id, newEntry);
+                showToast("Repair added (synced)");
+                await refreshCurrentView();
                 updateStats();
             }
             window.toggleModal('entryModal');
