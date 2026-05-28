@@ -29,10 +29,17 @@ let fullFilteredList = [];
 let isSearchActive = false;
 let searchFilteredList = [];
 
+
+let preViewModeBeforeSearch = 'day';
+let preNepaliYearBeforeSearch = 2082;
+let preNepaliMonthBeforeSearch = 1;
+let preDateBeforeSearch = new Date();
+
 let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
 let dueTimer = null;
+
 
 async function syncToAlgolia(objectID, data) {
     try {
@@ -75,31 +82,46 @@ async function deleteFromAlgolia(objectID) {
     }
 }
 
-async function refreshCurrentView(editedId = null, retryCount = 0) {
-    if (!isSearchActive || !currentSearchQuery || currentSearchQuery.length < 2) {
-        applyFiltersAndRender();
-        return;
+
+function updateSearchResultLocally(updatedRepair) {
+    // 1. Update the currently displayed page (displayedRepairs)
+    const dispIdx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
+    if (dispIdx !== -1) {
+        displayedRepairs[dispIdx] = { ...displayedRepairs[dispIdx], ...updatedRepair };
     }
     
-    const maxRetries = 3;
-    const delay = retryCount === 0 ? 500 : 800;
     
-    console.log(`🔄 Refreshing search (attempt ${retryCount + 1}/${maxRetries}) for "${currentSearchQuery}"`);
-    await new Promise(r => setTimeout(r, delay));
-    await performSearch(currentSearchQuery);
+    const repairsIdx = repairs.findIndex(r => r.id === updatedRepair.id);
+    if (repairsIdx !== -1) repairs[repairsIdx] = updatedRepair;
     
-    if (editedId && displayedRepairs.some(r => r.id === editedId)) {
-        console.log(`✅ Updated record ${editedId} found in search results`);
-        return;
-    }
     
-    if (retryCount < maxRetries - 1) {
-        await refreshCurrentView(editedId, retryCount + 1);
-    } else {
-        console.warn(`⚠️ Could not find updated record after ${maxRetries} attempts`);
-        showToast("Update saved, but search may take a moment to reflect changes.");
-    }
+    const monthIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
+    if (monthIdx !== -1) fullMonthRepairs[monthIdx] = updatedRepair;
+    
+
+    const filteredIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (filteredIdx !== -1) fullFilteredList[filteredIdx] = updatedRepair;
+
+    const searchIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
+    if (searchIdx !== -1) searchFilteredList[searchIdx] = updatedRepair;
+    
+   
+    renderTable(displayedRepairs);
+    
+    updateStats();
 }
+
+
+async function refreshCurrentView(editedId = null) {
+
+    if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
+        console.log(`✅ Edit saved – search results updated instantly, no re‑search needed.`);
+        return;
+    }
+   
+    applyFiltersAndRender();
+}
+
 
 function censorRevenue() {
     const revenueEl = document.getElementById('stat-revenue');
@@ -228,28 +250,6 @@ function rebuildMaps() {
     searchFilteredList.forEach(r => searchMap.set(r.id, r));
 }
 
-function updateSearchResultLocally(updatedRepair) {
-    const idx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (idx !== -1) displayedRepairs[idx] = { ...displayedRepairs[idx], ...updatedRepair };
-    
-    if (repairsMap.has(updatedRepair.id)) repairsMap.set(updatedRepair.id, updatedRepair);
-    const rIdx = repairs.findIndex(r => r.id === updatedRepair.id);
-    if (rIdx !== -1) repairs[rIdx] = updatedRepair;
-    
-    if (fullMonthMap.has(updatedRepair.id)) fullMonthMap.set(updatedRepair.id, updatedRepair);
-    const mIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (mIdx !== -1) fullMonthRepairs[mIdx] = updatedRepair;
-    
-    if (filteredMap.has(updatedRepair.id)) filteredMap.set(updatedRepair.id, updatedRepair);
-    const fIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (fIdx !== -1) fullFilteredList[fIdx] = updatedRepair;
-    
-    if (searchMap.has(updatedRepair.id)) searchMap.set(updatedRepair.id, updatedRepair);
-    const sIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (sIdx !== -1) searchFilteredList[sIdx] = updatedRepair;
-    
-    renderTable(displayedRepairs);
-}
 
 const pendingLogs = new Map();
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
@@ -374,7 +374,7 @@ function showLoadingSpinner(show) {
         if (show) {
             container.innerHTML = '<div class="flex justify-center py-4"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>';
         } else if (!isSearchActive && currentPage * itemsPerPage < totalFilteredItems) {
-            
+        
         } else {
             container.innerHTML = '';
         }
@@ -754,6 +754,14 @@ function smartLocalSearch(query, sourceArray) {
 }
 
 async function performSearch(query) {
+   
+    if (!isSearchActive) {
+        preViewModeBeforeSearch = currentView;
+        preNepaliYearBeforeSearch = currentNepaliYear;
+        preNepaliMonthBeforeSearch = currentNepaliMonth;
+        preDateBeforeSearch = new Date(currentDate);
+    }
+    
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
     if (!isSearching) {
@@ -905,7 +913,7 @@ function renderTable(data = repairs) {
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
-             </td>
+             </tr>
         `;
         fragment.appendChild(tr);
     });
@@ -1005,16 +1013,10 @@ window.updateStatus = async function (id) {
         await syncToAlgolia(id, updatedRepair);
         showToast(`Status changed to ${nextStatus} (synced)`);
         
+
         updateSearchResultLocally(updatedRepair);
-        if (currentView === 'month') {
-            const idx = fullMonthRepairs.findIndex(r => r.id === id);
-            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
-        } else {
-            const idx = repairs.findIndex(r => r.id === id);
-            if (idx !== -1) repairs[idx] = updatedRepair;
-        }
         
-        await refreshCurrentView(id);
+        
         updateStats();
     } catch (err) { console.error(err); alert("Failed to update status"); }
 };
@@ -1030,15 +1032,6 @@ window.markAsReturned = async function (id) {
         showToast(`Marked as returned (synced)`);
         
         updateSearchResultLocally(updatedRepair);
-        if (currentView === 'month') {
-            const idx = fullMonthRepairs.findIndex(r => r.id === id);
-            if (idx !== -1) fullMonthRepairs[idx] = updatedRepair;
-        } else {
-            const idx = repairs.findIndex(r => r.id === id);
-            if (idx !== -1) repairs[idx] = updatedRepair;
-        }
-        
-        await refreshCurrentView(id);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to mark as returned"); }
 };
@@ -1076,7 +1069,21 @@ window.deleteRepair = async function (id) {
         } else {
             repairs = repairs.filter(r => r.id !== id);
         }
-        await refreshCurrentView();
+        // Remove from displayed lists
+        displayedRepairs = displayedRepairs.filter(r => r.id !== id);
+        if (isSearchActive) {
+            searchFilteredList = searchFilteredList.filter(r => r.id !== id);
+            totalFilteredItems = searchFilteredList.length;
+            if (currentPage > 1 && displayedRepairs.length === 0 && currentPage > 1) {
+                currentPage--;
+                const start = (currentPage - 1) * itemsPerPage;
+                displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
+            }
+            renderTable(displayedRepairs);
+            updatePaginationControls();
+        } else {
+            applyFiltersAndRender();
+        }
         updateStats();
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
@@ -1184,15 +1191,9 @@ window.onload = async () => {
                 await syncToAlgolia(currentlyEditingId, updatedData);
                 showToast("Updated successfully (synced)");
                 
-                if (currentView === 'month') {
-                    const idx = fullMonthRepairs.findIndex(r => r.id === currentlyEditingId);
-                    if (idx !== -1) fullMonthRepairs[idx] = { ...fullMonthRepairs[idx], ...updatedData };
-                } else {
-                    const idx = repairs.findIndex(r => r.id === currentlyEditingId);
-                    if (idx !== -1) repairs[idx] = { ...repairs[idx], ...updatedData };
-                }
-                
-                await refreshCurrentView(currentlyEditingId);
+             
+                const updatedRepair = { ...updatedData, id: currentlyEditingId };
+                updateSearchResultLocally(updatedRepair);
                 updateStats();
             } else {
                 let selectedDate = (currentView === 'day') ? new Date(currentDate) : new Date();
@@ -1209,7 +1210,13 @@ window.onload = async () => {
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
                 await syncToAlgolia(docRef.id, newEntry);
                 showToast("Repair added (synced)");
-                await refreshCurrentView();
+                
+                if (isSearchActive) {
+                   
+                    await performSearch(currentSearchQuery);
+                } else {
+                    loadData();
+                }
                 updateStats();
             }
             window.toggleModal('entryModal');
