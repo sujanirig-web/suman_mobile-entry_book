@@ -34,7 +34,6 @@ let dueCensored = true;
 let revenueTimer = null;
 let dueTimer = null;
 
-// ========== RELIABLE ALGOLIA SYNC ==========
 async function syncToAlgolia(objectID, data) {
     try {
         console.log(`🔄 Syncing to Algolia: ${objectID}`);
@@ -76,7 +75,6 @@ async function deleteFromAlgolia(objectID) {
     }
 }
 
-// ========== REFRESH SEARCH WITH 3 RETRIES ==========
 async function refreshCurrentView(editedId = null, retryCount = 0) {
     if (!isSearchActive || !currentSearchQuery || currentSearchQuery.length < 2) {
         applyFiltersAndRender();
@@ -90,13 +88,11 @@ async function refreshCurrentView(editedId = null, retryCount = 0) {
     await new Promise(r => setTimeout(r, delay));
     await performSearch(currentSearchQuery);
     
-    // If we know which ID was edited, check if it's now in the displayed results
     if (editedId && displayedRepairs.some(r => r.id === editedId)) {
         console.log(`✅ Updated record ${editedId} found in search results`);
         return;
     }
     
-    // If not found and we haven't exhausted retries, try again
     if (retryCount < maxRetries - 1) {
         await refreshCurrentView(editedId, retryCount + 1);
     } else {
