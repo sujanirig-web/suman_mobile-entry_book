@@ -1150,7 +1150,7 @@ window.onload = async () => {
                 const blob = await (await fetch(compressedDataUrl)).blob();
                 const formData = new FormData();
                 formData.append("image", blob, "repair.jpg");
-                showToast("Uploading to ImgBB...");
+                showToast("Saving to Entry-Book...");
                 const res = await fetch(`${WORKER_URL}/upload`, {
                     method: "POST",
                     body: formData
