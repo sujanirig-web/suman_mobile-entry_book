@@ -29,7 +29,6 @@ let fullFilteredList = [];
 let isSearchActive = false;
 let searchFilteredList = [];
 
-
 let preViewModeBeforeSearch = 'day';
 let preNepaliYearBeforeSearch = 2082;
 let preNepaliMonthBeforeSearch = 1;
@@ -84,41 +83,25 @@ async function deleteFromAlgolia(objectID) {
 
 
 function updateSearchResultLocally(updatedRepair) {
-    // 1. Update the currently displayed page (displayedRepairs)
     const dispIdx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (dispIdx !== -1) {
-        displayedRepairs[dispIdx] = { ...displayedRepairs[dispIdx], ...updatedRepair };
-    }
-    
-    
+    if (dispIdx !== -1) displayedRepairs[dispIdx] = { ...displayedRepairs[dispIdx], ...updatedRepair };
     const repairsIdx = repairs.findIndex(r => r.id === updatedRepair.id);
     if (repairsIdx !== -1) repairs[repairsIdx] = updatedRepair;
-    
-    
     const monthIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
     if (monthIdx !== -1) fullMonthRepairs[monthIdx] = updatedRepair;
-    
-
     const filteredIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
     if (filteredIdx !== -1) fullFilteredList[filteredIdx] = updatedRepair;
-
     const searchIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
     if (searchIdx !== -1) searchFilteredList[searchIdx] = updatedRepair;
-    
-   
     renderTable(displayedRepairs);
-    
     updateStats();
 }
 
-
 async function refreshCurrentView(editedId = null) {
-
     if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
         console.log(`✅ Edit saved – search results updated instantly, no re‑search needed.`);
         return;
     }
-   
     applyFiltersAndRender();
 }
 
@@ -250,7 +233,6 @@ function rebuildMaps() {
     searchFilteredList.forEach(r => searchMap.set(r.id, r));
 }
 
-
 const pendingLogs = new Map();
 async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     const oldStr = String(oldValue), newStr = String(newValue);
@@ -374,7 +356,6 @@ function showLoadingSpinner(show) {
         if (show) {
             container.innerHTML = '<div class="flex justify-center py-4"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div></div>';
         } else if (!isSearchActive && currentPage * itemsPerPage < totalFilteredItems) {
-        
         } else {
             container.innerHTML = '';
         }
@@ -503,9 +484,8 @@ function setTab(tab) {
     if (active) active.classList.add('active-tab');
     const searchInput = document.getElementById('searchInput');
     const query = searchInput ? searchInput.value.trim() : '';
-    if (query.length >= 2) {
-        performSearch(query);
-    } else {
+    if (query.length >= 2) performSearch(query);
+    else {
         isSearchActive = false;
         resetPagination();
     }
@@ -739,29 +719,22 @@ function smartLocalSearch(query, sourceArray) {
         else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
         else matchesTab = true;
         let matchesFilter = true;
-        if (filterVal === 'today') {
-            matchesFilter = (r.date === todayBS);
-        } else if (filterVal === 'paid') {
-            matchesFilter = isPaid;
-        } else if (filterVal === 'unpaid') {
-            matchesFilter = isUnpaid;
-        } else if (filterVal !== 'all') {
-            matchesFilter = r.status === filterVal;
-        }
+        if (filterVal === 'today') matchesFilter = (r.date === todayBS);
+        else if (filterVal === 'paid') matchesFilter = isPaid;
+        else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+        else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
         return matchesTab && matchesFilter;
     });
     return final;
 }
 
 async function performSearch(query) {
-   
     if (!isSearchActive) {
         preViewModeBeforeSearch = currentView;
         preNepaliYearBeforeSearch = currentNepaliYear;
         preNepaliMonthBeforeSearch = currentNepaliMonth;
         preDateBeforeSearch = new Date(currentDate);
     }
-    
     currentSearchQuery = query;
     const isSearching = query.length >= 2;
     if (!isSearching) {
@@ -780,7 +753,6 @@ async function performSearch(query) {
         if (!response.ok) throw new Error(`Worker search failed: ${response.status}`);
         const res = await response.json();
         let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
-
         const todayBS = getTodayBSDate();
         hits = hits.filter(r => {
             const filterVal = document.getElementById('statusFilter')?.value || "all";
@@ -794,18 +766,12 @@ async function performSearch(query) {
             else if (currentTab === 'returned') matchesTab = (r.status === 'returned');
             else matchesTab = true;
             let matchesFilter = true;
-            if (filterVal === 'today') {
-                matchesFilter = (r.date === todayBS);
-            } else if (filterVal === 'paid') {
-                matchesFilter = isPaid;
-            } else if (filterVal === 'unpaid') {
-                matchesFilter = isUnpaid;
-            } else if (filterVal !== 'all') {
-                matchesFilter = r.status === filterVal;
-            }
+            if (filterVal === 'today') matchesFilter = (r.date === todayBS);
+            else if (filterVal === 'paid') matchesFilter = isPaid;
+            else if (filterVal === 'unpaid') matchesFilter = isUnpaid;
+            else if (filterVal !== 'all') matchesFilter = r.status === filterVal;
             return matchesTab && matchesFilter;
         });
-
         const trimmedQuery = query.trim();
         const isNumericQuery = /^\d+$/.test(trimmedQuery);
         if (isNumericQuery && hits.length > 0) {
@@ -821,7 +787,6 @@ async function performSearch(query) {
         } else if (hits.length > 0) {
             hits = sortBySNDesc(hits);
         }
-
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
         currentPage = 1;
@@ -866,9 +831,7 @@ function onSearchInput() {
     if (!input) return;
     const query = input.value.trim();
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-    searchDebounceTimer = setTimeout(() => {
-        performSearch(query);
-    }, 300);
+    searchDebounceTimer = setTimeout(() => performSearch(query), 300);
 }
 
 function renderTable(data = repairs) {
@@ -913,7 +876,7 @@ function renderTable(data = repairs) {
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
                 <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
-             </tr>
+             </td>
         `;
         fragment.appendChild(tr);
     });
@@ -1012,11 +975,7 @@ window.updateStatus = async function (id) {
         const updatedRepair = { ...repair, status: nextStatus };
         await syncToAlgolia(id, updatedRepair);
         showToast(`Status changed to ${nextStatus} (synced)`);
-        
-
         updateSearchResultLocally(updatedRepair);
-        
-        
         updateStats();
     } catch (err) { console.error(err); alert("Failed to update status"); }
 };
@@ -1030,7 +989,6 @@ window.markAsReturned = async function (id) {
         const updatedRepair = { ...repair, status: 'returned' };
         await syncToAlgolia(id, updatedRepair);
         showToast(`Marked as returned (synced)`);
-        
         updateSearchResultLocally(updatedRepair);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to mark as returned"); }
@@ -1069,7 +1027,6 @@ window.deleteRepair = async function (id) {
         } else {
             repairs = repairs.filter(r => r.id !== id);
         }
-        // Remove from displayed lists
         displayedRepairs = displayedRepairs.filter(r => r.id !== id);
         if (isSearchActive) {
             searchFilteredList = searchFilteredList.filter(r => r.id !== id);
@@ -1111,19 +1068,15 @@ window.onload = async () => {
             }
         };
     }
-
     const logoArea = document.querySelector('.flex.items-center.gap-3');
     if (logoArea) {
         logoArea.style.cursor = 'pointer';
         logoArea.addEventListener('click', (e) => { e.stopPropagation(); toggleLogoMenu(); });
     }
-
     const dateLabel = document.getElementById('dateLabel');
     if (dateLabel) dateLabel.addEventListener('click', () => window.goToday());
-
     const searchInput = document.getElementById('searchInput');
     if (searchInput) searchInput.addEventListener('input', onSearchInput);
-
     const statusFilter = document.getElementById('statusFilter');
     if (statusFilter) {
         statusFilter.addEventListener('change', () => {
@@ -1133,7 +1086,6 @@ window.onload = async () => {
             else resetPagination();
         });
     }
-
     const form = document.getElementById('repairForm');
     if (!form) return;
     let isSubmitting = false;
@@ -1179,19 +1131,29 @@ window.onload = async () => {
             if (currentlyEditingId) {
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
+                let existingDate = null;
                 if (oldSnap.exists()) {
                     const oldData = oldSnap.data();
+                    existingDate = oldData.date;
                     const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
                     if (oldData.phone !== formData.phone) await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
                     if (Number(oldData.cost || 0) !== costVal) await logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle);
                     if (Number(oldData.paid || 0) !== paidVal) await logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle);
                 }
-                const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending' };
+               
+                if (!existingDate && oldSnap.exists() && oldSnap.data().createdAt) {
+                    const oldData = oldSnap.data();
+                    let dateObj = typeof oldData.createdAt === "string" ? new Date(oldData.createdAt) : oldData.createdAt.seconds ? new Date(oldData.createdAt.seconds * 1000) : null;
+                    if (dateObj && !isNaN(dateObj)) {
+                        const nepDate = new NepaliDate(dateObj);
+                        existingDate = nepDate.format ? nepDate.format('YYYY/MM/DD') : nepDate.toString();
+                    }
+                }
+                if (!existingDate) existingDate = getTodayBSDate();
+                const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending', date: existingDate };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
                 await syncToAlgolia(currentlyEditingId, updatedData);
                 showToast("Updated successfully (synced)");
-                
-             
                 const updatedRepair = { ...updatedData, id: currentlyEditingId };
                 updateSearchResultLocally(updatedRepair);
                 updateStats();
@@ -1210,9 +1172,7 @@ window.onload = async () => {
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
                 await syncToAlgolia(docRef.id, newEntry);
                 showToast("Repair added (synced)");
-                
                 if (isSearchActive) {
-                   
                     await performSearch(currentSearchQuery);
                 } else {
                     loadData();
