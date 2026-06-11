@@ -1,15 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <script src="https://unpkg.com/nepali-date-converter@3.3.3/dist/nepali-date-converter.umd.js"></script>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
     <title>RE-LiFE | ENTRY-BOOK</title>
+    <script src="https://unpkg.com/nepali-date-converter@3.3.3/dist/nepali-date-converter.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/algoliasearch@4"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <style>
+        /* Absolute zoom prevention */
+        html {
+            -webkit-text-size-adjust: none;
+            text-size-adjust: none;
+        }
+        input, select, textarea {
+            font-size: 16px !important;
+            touch-action: manipulation;
+        }
         .rotate-180 {
             transform: rotate(180deg);
         }
@@ -19,19 +29,16 @@
         .blur-strong {
             filter: blur(20px);
         }
-        
         #repairTableBody tr {
             border-bottom: 1px solid #cbd5e1 !important; 
         }
         #repairTableBody tr:hover {
             background-color: #f8fafc; 
         }
-        
     </style>
 </head>
 <body class="min-h-screen pb-12">
 
-    
     <div id="loginOverlay" style="position:fixed; inset:0; background:#111; display:flex; align-items:center; justify-content:center; z-index:9999;">
         <div style="background:white; padding:30px; border-radius:10px; width:300px;">
             <h2 style="margin-bottom:15px;">Login</h2>
@@ -60,7 +67,6 @@
 
     <main class="max-w-7xl mx-auto p-4 md:p-8">
 
-       
         <div class="flex items-start gap-3">
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 flex-1">
                 <div onclick="setTab('all')" id="card-all" class="stat-card active-tab glass p-4 rounded-2xl shadow-sm relative overflow-hidden group cursor-pointer">
@@ -94,22 +100,21 @@
             </button>
         </div>
 
-        
         <div class="mb-8 flex flex-col md:flex-row gap-6 items-center justify-between mt-8">
             <div class="flex gap-4 w-full md:w-auto flex-wrap items-center">
-                <input type="text" id="searchInput" placeholder="Search..." class="w-full md:w-80 pl-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm shadow-sm">
-               <select id="statusFilter" class="px-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium">
-    <option value="today" >Today</option>
-    <option value="all" selected>All</option>
-    <option value="pending">Pending</option>
-    <option value="completed">Completed</option>
-    <option value="paid">Paid</option>
-    <option value="unpaid">Unpaid</option>
-</select>
+                <input type="text" id="searchInput" placeholder="Search..." class="w-full md:w-80 pl-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none shadow-sm text-base">
+                <select id="statusFilter" class="px-4 py-3 bg-white border border-slate-200 rounded-2xl font-medium text-base">
+                    <option value="today">Today</option>
+                    <option value="all" selected>All</option>
+                    <option value="pending">Pending</option>
+                    <option value="completed">Completed</option>
+                    <option value="paid">Paid</option>
+                    <option value="unpaid">Unpaid</option>
+                </select>
                 <div class="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
-                    <button onclick="prevPeriod()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">←</button>
+                    <button onclick="prevPeriod()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-600 transition">←</button>
                     <span id="dateLabel" onclick="goToday()" class="text-sm font-semibold text-slate-700 min-w-[120px] text-center cursor-pointer hover:text-indigo-600 transition">Today</span>
-                    <button onclick="nextPeriod()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">→</button>
+                    <button onclick="nextPeriod()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-600 transition">→</button>
                 </div>
             </div>
             <div onclick="toggleDueCensor()" id="dueCard" class="bg-red-50 px-6 py-3 rounded-2xl flex items-center gap-4 border border-red-100 cursor-pointer group">
@@ -118,14 +123,8 @@
             </div>
         </div>
 
-
-
-     
         <div id="paginationTop" class="mb-4"></div>
 
-        
-
-      
         <div class="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
@@ -146,7 +145,7 @@
         </div>
         <div id="paginationBottom" class="mt-4"></div>
     </main>
-    
+
     <div id="entryModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-5">
         <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onclick="toggleModal('entryModal')"></div>
         <div class="bg-white w-full max-w-2xl rounded-[2rem] relative z-10 overflow-hidden max-h-[90vh] flex flex-col">
@@ -159,7 +158,7 @@
                 <input type="text" id="customerName" placeholder="Client Name" required class="p-3 bg-slate-50 border rounded-xl outline-none text-base">
                 <input type="text" id="deviceModel" placeholder="Device Model" required class="p-3 bg-slate-50 border rounded-xl outline-none text-base">
                 <input type="text" id="issueType" placeholder="Describe the issue" required class="w-full p-3 bg-slate-50 border rounded-xl outline-none text-base">
-               <input type="tel" id="customerPhone" placeholder="Phone (optional)" class="p-3 bg-slate-50 border rounded-xl outline-none text-base">
+                <input type="tel" id="customerPhone" placeholder="Phone (optional)" class="p-3 bg-slate-50 border rounded-xl outline-none text-base">
                 <input type="text" id="devicePassword" placeholder="Device Password (optional)" class="p-3 bg-slate-50 border rounded-xl text-base">
                 <div class="md:col-span-2"></div>
                 <div class="md:col-span-2 space-y-2">
@@ -175,8 +174,8 @@
                         <button type="button" onclick="removeImage()" class="absolute top-0 right-0 bg-red-500 text-white p-1 text-[8px]"><i class="fas fa-times"></i></button>
                     </div>
                 </div>
-                <input type="number" id="cost" placeholder="Total Cost (रू)" class="p-3 bg-slate-50 border rounded-xl text-sm font-bold">
-                <input type="number" id="paid" placeholder="Amount Paid (रू)" class="p-3 bg-green-50 border-green-100 rounded-xl text-sm font-bold text-indigo-600">
+                <input type="number" id="cost" placeholder="Total Cost (रू)" class="p-3 bg-slate-50 border rounded-xl text-base font-bold">
+                <input type="number" id="paid" placeholder="Amount Paid (रू)" class="p-3 bg-green-50 border-green-100 rounded-xl text-base font-bold text-indigo-600">
                 <button type="submit" class="md:col-span-2 bg-slate-900 text-white py-4 rounded-2xl font-bold">Log Entry</button>
             </form>
         </div>

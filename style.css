@@ -6,6 +6,11 @@
     --background: #fdfdff;
 }
 
+/* Prevent auto-zoom on mobile inputs */
+input, select, textarea {
+    font-size: 16px !important;
+}
+
 body {
     font-family: 'Plus Jakarta Sans', sans-serif;
     background-color: var(--background);
@@ -25,7 +30,9 @@ body {
     border: 2px solid transparent;
 }
 
-.stat-card:hover { transform: translateY(-4px); }
+.stat-card:hover {
+    transform: translateY(-4px);
+}
 
 .stat-card.active-tab {
     border-color: var(--primary);
@@ -44,9 +51,31 @@ body {
     gap: 6px;
 }
 
-.status-pending { background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; }
-.status-repairing { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
-.status-completed { background: #f0fdf4; color: #15803d; border: 1px solid #dcfce7; }
-.status-cancelled { background: #fef2f2; color: #b91c1c; border: 1px solid #fee2e2; }
+.status-pending {
+    background: #fff7ed;
+    color: #c2410c;
+    border: 1px solid #ffedd5;
+}
 
-.table-row-hover:hover { background-color: #5fee6b; }
+.status-repairing {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #dbeafe;
+}
+
+.status-completed {
+    background: #f0fdf4;
+    color: #15803d;
+    border: 1px solid #dcfce7;
+}
+
+.status-cancelled {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fee2e2;
+}
+
+/* Softer hover colour for table rows */
+.table-row-hover:hover {
+    background-color: #f8fafc;
+}
