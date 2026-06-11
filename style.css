@@ -6,7 +6,6 @@
     --background: #fdfdff;
 }
 
-/* Prevent auto-zoom on mobile inputs */
 input, select, textarea {
     font-size: 16px !important;
 }
@@ -75,7 +74,6 @@ body {
     border: 1px solid #fee2e2;
 }
 
-/* Softer hover colour for table rows */
 .table-row-hover:hover {
     background-color: #f8fafc;
 }
