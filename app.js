@@ -255,6 +255,7 @@ async function logChange(repairId, field, oldValue, newValue, repairTitle) {
     setTimeout(() => pendingLogs.delete(key), 10000);
 }
 
+
 async function loadConfig() {
     const res = await fetch(`${WORKER_URL}/config`);
     if (!res.ok) throw new Error("Failed to load configuration");
@@ -281,6 +282,7 @@ async function loadConfig() {
                 const { year, month } = adToBsYearMonth(new Date());
                 currentNepaliYear = Number(year);
                 currentNepaliMonth = Number(month);
+                currentPage = 1; // reset page on login
                 loadData();
             } else {
                 overlay.style.display = 'flex';
@@ -302,6 +304,7 @@ function getDayRange(date) {
     const end = new Date(date); end.setHours(23,59,59,999);
     return { start, end };
 }
+
 
 function loadData() {
     if (unsubscribe) unsubscribe();
@@ -334,7 +337,7 @@ function loadData() {
             repairs = monthRepairs;
         }
         rebuildMaps();
-        currentPage = 1;
+       
         updateDateLabel();
         const searchInput = document.getElementById('searchInput');
         const query = searchInput ? searchInput.value.trim() : '';
@@ -361,6 +364,7 @@ function showLoadingSpinner(show) {
         }
     }
 }
+
 
 function applyFiltersAndRender() {
     if (isSearchActive) return;
@@ -401,6 +405,14 @@ function applyFiltersAndRender() {
     filteredMap.clear();
     fullFilteredList.forEach(r => filteredMap.set(r.id, r));
     totalFilteredItems = fullFilteredList.length;
+
+   
+    const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+    if (currentPage > totalPages) {
+        currentPage = totalPages > 0 ? totalPages : 1;
+    }
+    if (currentPage < 1) currentPage = 1;
+
     const start = (currentPage - 1) * itemsPerPage;
     displayedRepairs = fullFilteredList.slice(start, start + itemsPerPage);
     renderTable(displayedRepairs);
@@ -482,6 +494,7 @@ function setTab(tab) {
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
     const active = document.getElementById(`card-${tab}`);
     if (active) active.classList.add('active-tab');
+    currentPage = 1; // reset page on tab change
     const searchInput = document.getElementById('searchInput');
     const query = searchInput ? searchInput.value.trim() : '';
     if (query.length >= 2) performSearch(query);
@@ -502,29 +515,28 @@ function clearSearchInput() {
     }
 }
 
+
 window.prevPeriod = function () {
     if (currentView === 'day') {
         currentDate.setDate(currentDate.getDate() - 1);
-        clearSearchInput();
-        loadData();
     } else {
         if (currentNepaliMonth === 1) { currentNepaliMonth = 12; currentNepaliYear--; }
         else { currentNepaliMonth--; }
-        clearSearchInput();
-        loadData();
     }
+    currentPage = 1;
+    clearSearchInput();
+    loadData();
 };
 window.nextPeriod = function () {
     if (currentView === 'day') {
         currentDate.setDate(currentDate.getDate() + 1);
-        clearSearchInput();
-        loadData();
     } else {
         if (currentNepaliMonth === 12) { currentNepaliMonth = 1; currentNepaliYear++; }
         else { currentNepaliMonth++; }
-        clearSearchInput();
-        loadData();
     }
+    currentPage = 1;
+    clearSearchInput();
+    loadData();
 };
 window.goToday = function () {
     const today = new Date();
@@ -532,6 +544,7 @@ window.goToday = function () {
     const { year, month } = adToBsYearMonth(today);
     currentNepaliYear = year;
     currentNepaliMonth = month;
+    currentPage = 1;
     clearSearchInput();
     loadData();
 };
@@ -541,14 +554,16 @@ window.toggleViewMode = function () {
         const { year, month } = adToBsYearMonth(currentDate);
         currentNepaliYear = year;
         currentNepaliMonth = month;
-        loadData();
     } else {
         currentView = 'day';
-        loadData();
     }
+    currentPage = 1;
+    clearSearchInput();
+    loadData();
     const icon = document.getElementById('viewToggleIcon');
     if (icon) icon.classList.toggle('rotate-180');
 };
+
 
 window.toggleModal = function (id) {
     const modal = document.getElementById(id);
@@ -644,6 +659,7 @@ function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
     });
 }
 
+
 function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
@@ -728,6 +744,7 @@ function smartLocalSearch(query, sourceArray) {
     return final;
 }
 
+
 async function performSearch(query) {
     if (!isSearchActive) {
         preViewModeBeforeSearch = currentView;
@@ -789,7 +806,15 @@ async function performSearch(query) {
         }
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
-        currentPage = 1;
+
+        
+        const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+        if (currentPage > totalPages) {
+            currentPage = totalPages > 0 ? totalPages : 1;
+        }
+        if (currentPage < 1) currentPage = 1;
+
+        currentPage = 1; // reset to page 1 for new search
         displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
@@ -816,7 +841,11 @@ async function performSearch(query) {
         }
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
-        currentPage = 1;
+        const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+        if (currentPage > totalPages) {
+            currentPage = totalPages > 0 ? totalPages : 1;
+        }
+        if (currentPage < 1) currentPage = 1;
         displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
@@ -833,6 +862,7 @@ function onSearchInput() {
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
     searchDebounceTimer = setTimeout(() => performSearch(query), 300);
 }
+
 
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
@@ -965,6 +995,7 @@ function toggleLogoMenu() {
 }
 window.toggleLogoMenu = toggleLogoMenu;
 
+
 window.updateStatus = async function (id) {
     const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
     if (!repair) { showToast("Repair not found", true); return; }
@@ -1031,11 +1062,13 @@ window.deleteRepair = async function (id) {
         if (isSearchActive) {
             searchFilteredList = searchFilteredList.filter(r => r.id !== id);
             totalFilteredItems = searchFilteredList.length;
-            if (currentPage > 1 && displayedRepairs.length === 0 && currentPage > 1) {
-                currentPage--;
-                const start = (currentPage - 1) * itemsPerPage;
-                displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
+            const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
+            if (currentPage > totalPages) {
+                currentPage = totalPages > 0 ? totalPages : 1;
             }
+            if (currentPage < 1) currentPage = 1;
+            const start = (currentPage - 1) * itemsPerPage;
+            displayedRepairs = searchFilteredList.slice(start, start + itemsPerPage);
             renderTable(displayedRepairs);
             updatePaginationControls();
         } else {
@@ -1044,6 +1077,7 @@ window.deleteRepair = async function (id) {
         updateStats();
     } catch (err) { console.error(err); alert("Delete failed"); }
 };
+
 
 window.onload = async () => {
     try {
