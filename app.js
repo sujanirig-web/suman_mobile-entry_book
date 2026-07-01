@@ -81,18 +81,20 @@ async function deleteFromAlgolia(objectID) {
     }
 }
 
-
 function updateSearchResultLocally(updatedRepair) {
-    const dispIdx = displayedRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (dispIdx !== -1) displayedRepairs[dispIdx] = { ...displayedRepairs[dispIdx], ...updatedRepair };
-    const repairsIdx = repairs.findIndex(r => r.id === updatedRepair.id);
-    if (repairsIdx !== -1) repairs[repairsIdx] = updatedRepair;
-    const monthIdx = fullMonthRepairs.findIndex(r => r.id === updatedRepair.id);
-    if (monthIdx !== -1) fullMonthRepairs[monthIdx] = updatedRepair;
-    const filteredIdx = fullFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (filteredIdx !== -1) fullFilteredList[filteredIdx] = updatedRepair;
-    const searchIdx = searchFilteredList.findIndex(r => r.id === updatedRepair.id);
-    if (searchIdx !== -1) searchFilteredList[searchIdx] = updatedRepair;
+    const updateArray = (arr) =>
+        arr.map(item =>
+            item.id === updatedRepair.id
+                ? { ...item, ...updatedRepair }
+                : item
+        );
+
+    repairs = updateArray(repairs);
+    fullMonthRepairs = updateArray(fullMonthRepairs);
+    fullFilteredList = updateArray(fullFilteredList);
+    searchFilteredList = updateArray(searchFilteredList);
+    displayedRepairs = updateArray(displayedRepairs);
+
     renderTable(displayedRepairs);
     updateStats();
 }
@@ -342,7 +344,8 @@ function loadData() {
         const searchInput = document.getElementById('searchInput');
         const query = searchInput ? searchInput.value.trim() : '';
         if (query.length >= 2) {
-            performSearch(query);
+    console.log("Skipping automatic Algolia refresh");
+    renderTable(displayedRepairs);
         } else {
             isSearchActive = false;
             applyFiltersAndRender();
