@@ -637,7 +637,9 @@ window.jumpToRepairDate = function (repair) {
     showToast("Jumped to selected date");
 };
 window.jumpToRepairDateById = function (id) {
-    const r = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    const r = repairs.find(x => x.id === id || x.objectID === id)
+           || displayedRepairs.find(x => x.id === id || x.objectID === id);
+
     if (r) window.jumpToRepairDate(r);
 };
 
@@ -884,7 +886,13 @@ function renderTable(data = repairs) {
             <td class="px-8 py-6">
                 <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
                 <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
-                <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.date || ''}</div>
+               <div
+    class="text-[12px] font-bold text-blue-600 uppercase mt-1 tracking-wider cursor-pointer hover:underline hover:text-blue-700 transition-colors"
+    onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')"
+    title="Jump to this date"
+>
+    ${repair.date || ''}
+</div>
                 <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.phone || ''}</div>
             </td>
             <td class="px-7 py-7">
@@ -907,7 +915,7 @@ function renderTable(data = repairs) {
             <td class="px-8 py-6 text-right space-x-3">
                 <button onclick="event.stopPropagation(); editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
                 <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
-                <button onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')" class="text-slate-300 hover:text-blue-500">🏴</button>
+             
                 ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
              </td>
         `;
