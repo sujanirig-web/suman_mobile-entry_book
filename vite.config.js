@@ -3,5 +3,5 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/relife-entry-book/', // Add this line!
+  base: '/relife-entry-book/', 
 })

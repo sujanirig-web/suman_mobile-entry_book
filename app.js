@@ -38,7 +38,7 @@ let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
 let dueTimer = null;
-
+let globalMaxSN = 0;  
 
 async function syncToAlgolia(objectID, data) {
     try {
@@ -207,16 +207,9 @@ function sendNotification(title, body) {
     } catch(e) {}
 }
 
+
 function getNextSerialNumber() {
-    const allRepairs = (currentView === 'month') ? fullMonthRepairs : repairs;
-    let maxSN = 0;
-    for (const r of allRepairs) {
-        const num = parseInt(r.sn, 10);
-        if (!isNaN(num) && num > maxSN) {
-            maxSN = num;
-        }
-    }
-    return (maxSN + 1).toString();
+    return (globalMaxSN + 1).toString();
 }
 
 let repairsMap = new Map();
@@ -284,7 +277,7 @@ async function loadConfig() {
                 const { year, month } = adToBsYearMonth(new Date());
                 currentNepaliYear = Number(year);
                 currentNepaliMonth = Number(month);
-                currentPage = 1; // reset page on login
+                currentPage = 1; 
                 loadData();
             } else {
                 overlay.style.display = 'flex';
@@ -315,6 +308,17 @@ function loadData() {
     showLoadingSpinner(true);
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+
+       
+        let maxSN = 0;
+        for (const r of allData) {
+            const num = parseInt(r.sn, 10);
+            if (!isNaN(num) && num > maxSN) {
+                maxSN = num;
+            }
+        }
+        globalMaxSN = maxSN;
+
         if (currentView === 'day') {
             const { start, end } = getDayRange(currentDate);
             let dayRepairs = allData.filter(r => {
@@ -497,7 +501,7 @@ function setTab(tab) {
     document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active-tab'));
     const active = document.getElementById(`card-${tab}`);
     if (active) active.classList.add('active-tab');
-    currentPage = 1; // reset page on tab change
+    currentPage = 1; 
     const searchInput = document.getElementById('searchInput');
     const query = searchInput ? searchInput.value.trim() : '';
     if (query.length >= 2) performSearch(query);
@@ -819,7 +823,7 @@ async function performSearch(query) {
         }
         if (currentPage < 1) currentPage = 1;
 
-        currentPage = 1; // reset to page 1 for new search
+        currentPage = 1; 
         displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();

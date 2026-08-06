@@ -6,7 +6,7 @@ const path = require('path');
 const app = express();
 
 // Middleware
-app.use(cors({ origin: "*" })); // change later for production
+app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -19,7 +19,7 @@ const initFile = () => {
     }
 };
 
-// Read data safely
+
 const readData = () => {
     initFile();
     try {
@@ -40,12 +40,10 @@ const writeData = (data) => {
     }
 };
 
-// Generate unique ID
+
 const generateId = () => Date.now().toString();
 
-// ================= ROUTES =================
-
-// 1. GET ALL
+//  ROUTES 
 app.get('/api/repairs', (req, res) => {
     try {
         const data = readData();
@@ -55,7 +53,7 @@ app.get('/api/repairs', (req, res) => {
     }
 });
 
-// 2. ADD NEW
+
 app.post('/api/repairs', (req, res) => {
     try {
         const { customerName, phone } = req.body;
@@ -91,7 +89,7 @@ app.post('/api/repairs', (req, res) => {
     }
 });
 
-// 3. UPDATE
+
 app.put('/api/repairs/:id', (req, res) => {
     try {
         const data = readData();
@@ -115,7 +113,7 @@ app.put('/api/repairs/:id', (req, res) => {
     }
 });
 
-// 4. DELETE
+
 app.delete('/api/repairs/:id', (req, res) => {
     try {
         const data = readData();
@@ -133,7 +131,7 @@ app.delete('/api/repairs/:id', (req, res) => {
     }
 });
 
-// 5. FIX OLD DATA (VERY IMPORTANT 🔥)
+
 app.get('/api/fix-ids', (req, res) => {
     try {
         let data = readData();
@@ -151,9 +149,9 @@ app.get('/api/fix-ids', (req, res) => {
     }
 });
 
-// ================= SERVER =================
+// SERVER 
 const PORT = 5000;
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(` Server running on http://localhost:${PORT}`);
 });
