@@ -3,5 +3,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/relife-entry-book/', 
+  base: '/relife-entry-book/',
+  build: {
+    rollupOptions: {
+      external: /^https?:\/\//
+    }
+  }
 })

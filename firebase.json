@@ -1,16 +1,13 @@
 {
-  "functions": [
-    {
-      "source": "functions",
-      "codebase": "default",
-      "disallowLegacyRuntimeConfig": true,
-      "ignore": [
-        "node_modules",
-        ".git",
-        "firebase-debug.log",
-        "firebase-debug.*.log",
-        "*.local"
-      ]
-    }
-  ]
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "node_modules/",
+      "dist/",
+      ".git/**",
+      "*.local",
+      "server.js",
+      "repairs.json"
+    ]
+  }
 }

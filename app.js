@@ -1,6 +1,6 @@
 //app.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 const WORKER_URL = 'https://relife-api-proxy.sujanirig.workers.dev';
@@ -20,6 +20,7 @@ let currentlyEditingId = null;
 let unsubscribe = null;
 let currentSearchQuery = "";
 let searchDebounceTimer = null;
+let searchSeq = 0;
 let isLoading = false;
 
 let currentPage = 1;
@@ -40,13 +41,19 @@ let revenueTimer = null;
 let dueTimer = null;
 let globalMaxSN = 0;  
 
+function algoliaSafe(data) {
+    const clone = { ...data };
+    delete clone.password;
+    return clone;
+}
+
 async function syncToAlgolia(objectID, data) {
     try {
         console.log(`🔄 Syncing to Algolia: ${objectID}`);
         const response = await fetch(`${WORKER_URL}/update-algolia`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ objectID, ...data })
+            body: JSON.stringify(algoliaSafe({ objectID, ...data }))
         });
         if (!response.ok) {
             const errorText = await response.text();
@@ -99,15 +106,6 @@ function updateSearchResultLocally(updatedRepair) {
     updateStats();
 }
 
-async function refreshCurrentView(editedId = null) {
-    if (isSearchActive && currentSearchQuery && currentSearchQuery.length >= 2) {
-        console.log(`✅ Edit saved – search results updated instantly, no re‑search needed.`);
-        return;
-    }
-    applyFiltersAndRender();
-}
-
-
 function censorRevenue() {
     const revenueEl = document.getElementById('stat-revenue');
     if (revenueEl) revenueEl.classList.add('blur-strong');
@@ -148,8 +146,6 @@ window.toggleDueCensor = function() {
         dueTimer = setTimeout(() => censorDue(), 1000);
     }
 };
-
-if ("Notification" in window) Notification.requestPermission();
 
 function sortBySNDesc(arr) {
     return arr.sort((a, b) => {
@@ -200,32 +196,12 @@ function getTodayBSDate() {
     }
 }
 
-function sendNotification(title, body) {
-    showToast(body);
-    try {
-        if (window.Notification && Notification.permission === "granted") new Notification(title, { body });
-    } catch(e) {}
-}
-
-
 function getNextSerialNumber() {
-    return (globalMaxSN + 1).toString();
-}
-
-let repairsMap = new Map();
-let fullMonthMap = new Map();
-let filteredMap = new Map();
-let searchMap = new Map();
-
-function rebuildMaps() {
-    repairsMap.clear();
-    repairs.forEach(r => repairsMap.set(r.id, r));
-    fullMonthMap.clear();
-    fullMonthRepairs.forEach(r => fullMonthMap.set(r.id, r));
-    filteredMap.clear();
-    fullFilteredList.forEach(r => filteredMap.set(r.id, r));
-    searchMap.clear();
-    searchFilteredList.forEach(r => searchMap.set(r.id, r));
+    let next = globalMaxSN + 1;
+    const taken = new Set();
+    repairs.concat(fullMonthRepairs).forEach(r => taken.add(String(r.sn)));
+    while (taken.has(String(next))) next++;
+    return String(next);
 }
 
 const pendingLogs = new Map();
@@ -281,14 +257,15 @@ async function loadConfig() {
                 loadData();
             } else {
                 overlay.style.display = 'flex';
+                if (unsubscribe) { unsubscribe(); unsubscribe = null; }
                 repairs = [];
                 displayedRepairs = [];
+                fullMonthRepairs = [];
                 fullFilteredList = [];
                 searchFilteredList = [];
                 isSearchActive = false;
                 currentPage = 1;
-                rebuildMaps();
-                if (typeof window.applyFiltersAndRender === 'function') window.applyFiltersAndRender();
+                applyFiltersAndRender();
             }
         }
     });
@@ -303,13 +280,13 @@ function getDayRange(date) {
 
 function loadData() {
     if (unsubscribe) unsubscribe();
-    const q = query(collection(db, "repairs"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "repairs"));
     isLoading = true;
     showLoadingSpinner(true);
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
-       
+        
         let maxSN = 0;
         for (const r of allData) {
             const num = parseInt(r.sn, 10);
@@ -322,13 +299,11 @@ function loadData() {
         if (currentView === 'day') {
             const { start, end } = getDayRange(currentDate);
             let dayRepairs = allData.filter(r => {
-                if (!r.createdAt) return true;
-                let d = typeof r.createdAt === "string" ? new Date(r.createdAt) : r.createdAt.seconds ? new Date(r.createdAt.seconds * 1000) : null;
-                if (!d || isNaN(d)) return true;
+                let d = typeof r.createdAt === "string" ? new Date(r.createdAt) : (r.createdAt && r.createdAt.seconds) ? new Date(r.createdAt.seconds * 1000) : null;
+                if (!d || isNaN(d)) return false;
                 return d >= start && d <= end;
             });
-            dayRepairs = sortBySNDesc(dayRepairs);
-            repairs = dayRepairs;
+            repairs = sortBySNDesc(dayRepairs);
             fullMonthRepairs = [];
         } else {
             let monthRepairs = allData.filter(r => {
@@ -338,16 +313,14 @@ function loadData() {
                 const { year, month } = adToBsYearMonth(d);
                 return year === currentNepaliYear && month === currentNepaliMonth;
             });
-            monthRepairs = sortBySNDesc(monthRepairs);
-            fullMonthRepairs = monthRepairs;
-            repairs = monthRepairs;
+            fullMonthRepairs = sortBySNDesc(monthRepairs);
+            repairs = fullMonthRepairs;
         }
-        rebuildMaps();
-       
+
         updateDateLabel();
         const searchInput = document.getElementById('searchInput');
-        const query = searchInput ? searchInput.value.trim() : '';
-        if (query.length >= 2) {
+        const searchVal = searchInput ? searchInput.value.trim() : '';
+        if (searchVal.length >= 2) {
     console.log("Skipping automatic Algolia refresh");
     renderTable(displayedRepairs);
         } else {
@@ -357,6 +330,11 @@ function loadData() {
         updateStats();
         isLoading = false;
         showLoadingSpinner(false);
+    }, (err) => {
+        console.error("Snapshot error:", err);
+        isLoading = false;
+        showLoadingSpinner(false);
+        showToast("Live sync error – please reload the page", true);
     });
 }
 
@@ -409,8 +387,6 @@ function applyFiltersAndRender() {
     }
     filtered = sortBySNDesc(filtered);
     fullFilteredList = filtered;
-    filteredMap.clear();
-    fullFilteredList.forEach(r => filteredMap.set(r.id, r));
     totalFilteredItems = fullFilteredList.length;
 
    
@@ -603,17 +579,21 @@ window.toggleModal = function (id) {
 };
 window.handleImageUpload = function (input) {
     const file = input.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = function (e) {
-            currentImageData = e.target.result;
-            const previewImg = document.getElementById('previewImg');
-            const previewDiv = document.getElementById('imagePreview');
-            if (previewImg) previewImg.src = currentImageData;
-            if (previewDiv) previewDiv.classList.remove('hidden');
-        };
-        reader.readAsDataURL(file);
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+        showToast("Image too large – max 20MB", true);
+        input.value = '';
+        return;
     }
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        currentImageData = e.target.result;
+        const previewImg = document.getElementById('previewImg');
+        const previewDiv = document.getElementById('imagePreview');
+        if (previewImg) previewImg.src = currentImageData;
+        if (previewDiv) previewDiv.classList.remove('hidden');
+    };
+    reader.readAsDataURL(file);
 };
 window.removeImage = function () {
     currentImageData = null;
@@ -651,19 +631,26 @@ function compressImage(dataUrl, maxWidth = 1024, quality = 0.7) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
-            const canvas = document.createElement('canvas');
-            let width = img.width;
-            let height = img.height;
-            if (width > maxWidth) {
-                height = (height * maxWidth) / width;
-                width = maxWidth;
+            try {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                if (width > maxWidth) {
+                    height = (height * maxWidth) / width;
+                    width = maxWidth;
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            } catch (e) {
+                resolve(dataUrl);
             }
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
         };
+        img.onerror = () => resolve(dataUrl);
         img.src = dataUrl;
     });
 }
@@ -673,8 +660,8 @@ function smartLocalSearch(query, sourceArray) {
     const lowerQuery = query.toLowerCase();
     const words = lowerQuery.split(/\s+/).filter(w => w.length > 0);
     if (words.length === 0) return [];
-    let limit = 500;
-    if (query.length <= 3) limit = 200;
+    let limit = 2000;
+    if (query.length <= 3) limit = 800;
     const limitedArray = sourceArray.slice(0, limit);
     const scored = limitedArray.map(repair => {
         const fields = {
@@ -755,6 +742,7 @@ function smartLocalSearch(query, sourceArray) {
 
 
 async function performSearch(query) {
+    const reqId = ++searchSeq;
     if (!isSearchActive) {
         preViewModeBeforeSearch = currentView;
         preNepaliYearBeforeSearch = currentNepaliYear;
@@ -778,7 +766,8 @@ async function performSearch(query) {
         });
         if (!response.ok) throw new Error(`Worker search failed: ${response.status}`);
         const res = await response.json();
-        let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID }));
+        if (reqId !== searchSeq) return;
+        let hits = res.hits.map(hit => ({ ...hit, id: hit.objectID || hit.id }));
         const todayBS = getTodayBSDate();
         hits = hits.filter(r => {
             const filterVal = document.getElementById('statusFilter')?.value || "all";
@@ -813,15 +802,9 @@ async function performSearch(query) {
         } else if (hits.length > 0) {
             hits = sortBySNDesc(hits);
         }
+        if (reqId !== searchSeq) return;
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
-
-        
-        const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
-        if (currentPage > totalPages) {
-            currentPage = totalPages > 0 ? totalPages : 1;
-        }
-        if (currentPage < 1) currentPage = 1;
 
         currentPage = 1; 
         displayedRepairs = hits.slice(0, itemsPerPage);
@@ -830,6 +813,7 @@ async function performSearch(query) {
         if (hits.length === 0) showToast(`No results for "${query}"`);
         else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
+        if (reqId !== searchSeq) return;
         console.error("Worker search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
         let hits = smartLocalSearch(query, sourceData);
@@ -848,19 +832,16 @@ async function performSearch(query) {
         } else if (hits.length > 0) {
             hits = sortBySNDesc(hits);
         }
+        if (reqId !== searchSeq) return;
         searchFilteredList = hits;
         totalFilteredItems = hits.length;
-        const totalPages = Math.ceil(totalFilteredItems / itemsPerPage);
-        if (currentPage > totalPages) {
-            currentPage = totalPages > 0 ? totalPages : 1;
-        }
-        if (currentPage < 1) currentPage = 1;
+        currentPage = 1; 
         displayedRepairs = hits.slice(0, itemsPerPage);
         renderTable(displayedRepairs);
         updatePaginationControls();
         showToast(`Search completed with ${hits.length} results (local backup)`);
     } finally {
-        showLoadingSpinner(false);
+        if (reqId === searchSeq) showLoadingSpinner(false);
     }
 }
 
@@ -872,6 +853,10 @@ function onSearchInput() {
     searchDebounceTimer = setTimeout(() => performSearch(query), 300);
 }
 
+
+function escHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 function renderTable(data = repairs) {
     const tbody = document.getElementById('repairTableBody');
@@ -885,31 +870,32 @@ function renderTable(data = repairs) {
         const due = (Number(repair.cost) || 0) - (Number(repair.paid) || 0);
         const tr = document.createElement('tr');
         tr.className = "table-row-hover group border-b border-slate-50";
+        tr.dataset.id = repair.id;
         let statusColor = repair.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : repair.status === 'returned' ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600';
         tr.innerHTML = `
             <td class="px-8 py-6">
-                <div class="text-[0px] font-bold text-slate-0">#${repair.id}</div>
-                <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${repair.sn || 'NONE'}</div>
-               <div
-    class="text-[12px] font-bold text-blue-600 uppercase mt-1 tracking-wider cursor-pointer hover:underline hover:text-blue-700 transition-colors"
-    onclick="event.stopPropagation(); jumpToRepairDateById('${repair.id}')"
-    title="Jump to this date"
->
-    ${repair.date || ''}
-</div>
-                <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${repair.phone || ''}</div>
+                <div class="text-[0px] font-bold text-slate-0">#${escHtml(repair.id)}</div>
+                <div class="text-[13px] font-bold text-green-800 uppercase mt-1">SN: ${escHtml(repair.sn || 'NONE')}</div>
+                <div
+                    data-action="jump"
+                    class="text-[12px] font-bold text-blue-600 uppercase mt-1 tracking-wider cursor-pointer hover:underline hover:text-blue-700 transition-colors"
+                    title="Jump to this date"
+                >
+                    ${escHtml(repair.date || '')}
+                </div>
+                <div class="text-[12px] font-bold text-slate-700 uppercase mt-1 tracking-wider">${escHtml(repair.phone || '')}</div>
             </td>
             <td class="px-7 py-7">
-                <div class="font-bold text-slate-800 text-sm">${repair.customer || ''}</div>
-                <div class="font-bold text-green-600 text-[16px] uppercase">${repair.device || ''}</div>
-                <div class="font-bold text-[12px] text-black-700">🔒 Pass: ${repair.password || ''}</div>
+                <div class="font-bold text-slate-800 text-sm">${escHtml(repair.customer || '')}</div>
+                <div class="font-bold text-green-600 text-[16px] uppercase">${escHtml(repair.device || '')}</div>
+                <div class="font-bold text-[12px] text-black-700">🔒 Pass: ${escHtml(repair.password || '')}</div>
             </td>
             <td class="px-6 py-6">
-                <div class="text-xs font-bold text-slate-600">${repair.issue || ''}</div>
-                ${repair.image ? `<img src="${repair.image}" onclick="viewImage('${repair.image}')" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
+                <div class="text-xs font-bold text-slate-600">${escHtml(repair.issue || '')}</div>
+                ${repair.image ? `<img src="${escHtml(repair.image)}" alt="" data-action="view" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
               </td>
             <td class="px-6 py-6">
-                <button onclick="updateStatus('${repair.id}')" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusColor}">${repair.status || 'pending'}</button>
+                <button type="button" data-action="status" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusColor}">${escHtml(repair.status || 'pending')}</button>
               </td>
             <td class="px-6 py-6">
                 <div class="text-[11px] font-bold text-slate-700">Total: रू${(Number(repair.cost) || 0).toLocaleString()}</div>
@@ -917,10 +903,10 @@ function renderTable(data = repairs) {
                 <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
               </td>
             <td class="px-8 py-6 text-right space-x-3">
-                <button onclick="event.stopPropagation(); editRepair('${repair.id}')" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
-                <button onclick="event.stopPropagation(); deleteRepair('${repair.id}')" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
+                <button type="button" data-action="edit" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
+                <button type="button" data-action="delete" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
              
-                ${repair.status !== 'returned' ? `<button onclick="event.stopPropagation(); markAsReturned('${repair.id}')" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
+                ${repair.status !== 'returned' ? `<button type="button" data-action="return" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
              </td>
         `;
         fragment.appendChild(tr);
@@ -928,9 +914,38 @@ function renderTable(data = repairs) {
     tbody.appendChild(fragment);
 }
 
+let tableDelegateAttached = false;
+function attachTableDelegate() {
+    const tbody = document.getElementById('repairTableBody');
+    if (!tbody || tableDelegateAttached) return;
+    tableDelegateAttached = true;
+    tbody.addEventListener('click', (e) => {
+        const el = e.target.closest('[data-action]');
+        if (!el) return;
+        const row = el.closest('tr');
+        const id = row ? row.dataset.id : null;
+        switch (el.dataset.action) {
+            case 'view': window.viewImage(el.getAttribute('src')); break;
+            case 'jump': if (id) window.jumpToRepairDateById(id); break;
+            case 'status': if (id) window.updateStatus(id); break;
+            case 'edit': if (id) window.editRepair(id); break;
+            case 'delete': if (id) window.deleteRepair(id); break;
+            case 'return': if (id) window.markAsReturned(id); break;
+        }
+    });
+}
+
+function findRepairAnywhere(id) {
+    return displayedRepairs.find(x => x.id === id || x.objectID === id)
+        || repairs.find(x => x.id === id || x.objectID === id)
+        || fullMonthRepairs.find(x => x.id === id || x.objectID === id)
+        || searchFilteredList.find(x => x.id === id || x.objectID === id)
+        || null;
+}
+
 function updateStats() {
     let dataForStats = (currentView === 'day') ? repairs : fullMonthRepairs;
-    const pending = dataForStats.filter(r => r.status === 'pending').length;
+    const pending = dataForStats.filter(r => r.status !== 'completed' && r.status !== 'returned').length;
     const fixed = dataForStats.filter(r => r.status === 'completed').length;
     const returned = dataForStats.filter(r => r.status === 'returned').length;
     const revenue = dataForStats.reduce((a, c) => a + (Number(c.paid) || 0), 0);
@@ -947,13 +962,16 @@ function updateStats() {
     else document.getElementById('stat-credit')?.classList.remove('blur-strong');
 }
 
+let toastHideTimer = null;
 function showToast(msg, isError = false) {
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toastMessage');
     if (toast && toastMsg) {
         toastMsg.textContent = msg;
+        toastMsg.style.color = isError ? '#fca5a5' : '';
         toast.classList.remove('translate-y-20', 'opacity-0');
-        setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
+        if (toastHideTimer) clearTimeout(toastHideTimer);
+        toastHideTimer = setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 3000);
     }
 }
 
@@ -964,7 +982,7 @@ window.showLogsModal = async function () {
     logsList.innerHTML = '<div class="p-4 text-center">Loading logs...</div>';
     window.toggleModal('logsModal');
     try {
-        const q = query(collection(db, "logs"), orderBy("timestamp", "desc"));
+        const q = query(collection(db, "logs"), orderBy("timestamp", "desc"), limit(200));
         const snapshot = await getDocs(q);
         if (snapshot.empty) { logsList.innerHTML = '<div class="p-4 text-center text-slate-500">No logs found.</div>'; return; }
         let html = '<div class="divide-y divide-slate-100">';
@@ -993,10 +1011,10 @@ function toggleLogoMenu() {
         menu.id = 'logoDropdown';
         menu.className = 'absolute mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-200 z-50 hidden';
         menu.innerHTML = `
-            <button onclick="showLogsModal(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-t-xl flex items-center gap-2">
+            <button onclick="event.stopPropagation(); showLogsModal(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-t-xl flex items-center gap-2">
                 <i class="fas fa-history text-slate-500"></i> 📜 View Logs
             </button>
-            <button onclick="toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-b-xl flex items-center gap-2">
+            <button onclick="event.stopPropagation(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-b-xl flex items-center gap-2">
                 <i class="fas fa-times text-slate-500"></i> Close
             </button>
         `;
@@ -1012,36 +1030,36 @@ window.toggleLogoMenu = toggleLogoMenu;
 
 
 window.updateStatus = async function (id) {
-    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
+    const repair = findRepairAnywhere(id);
     if (!repair) { showToast("Repair not found", true); return; }
     const currentStatus = repair.status || 'pending';
     let nextStatus = currentStatus === 'pending' ? 'completed' : currentStatus === 'completed' ? 'returned' : currentStatus === 'returned' ? 'pending' : 'pending';
     try {
         await updateDoc(doc(db, "repairs", id), { status: nextStatus });
         const updatedRepair = { ...repair, status: nextStatus };
-        await syncToAlgolia(id, updatedRepair);
-        showToast(`Status changed to ${nextStatus} (synced)`);
+        const synced = await syncToAlgolia(id, updatedRepair);
+        showToast(synced ? `Status changed to ${nextStatus} (synced)` : `Status changed to ${nextStatus} – search sync failed`, !synced);
         updateSearchResultLocally(updatedRepair);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to update status"); }
 };
 
 window.markAsReturned = async function (id) {
-    const repair = repairs.find(r => r.id === id) || displayedRepairs.find(r => r.id === id);
+    const repair = findRepairAnywhere(id);
     if (!repair) { showToast("Repair not found", true); return; }
     if (repair.status === 'returned') { showToast("Already marked as returned"); return; }
     try {
         await updateDoc(doc(db, "repairs", id), { status: 'returned' });
         const updatedRepair = { ...repair, status: 'returned' };
-        await syncToAlgolia(id, updatedRepair);
-        showToast(`Marked as returned (synced)`);
+        const synced = await syncToAlgolia(id, updatedRepair);
+        showToast(synced ? `Marked as returned (synced)` : `Marked as returned – search sync failed`, !synced);
         updateSearchResultLocally(updatedRepair);
         updateStats();
     } catch (err) { console.error(err); alert("Failed to mark as returned"); }
 };
 
 window.editRepair = function (id) {
-    const repair = displayedRepairs.find(x => x.id === id || x.objectID === id);
+    const repair = findRepairAnywhere(id);
     if (!repair) return;
     currentlyEditingId = id;
     document.getElementById('modalTitle').textContent = "Edit Repair #" + id;
@@ -1103,8 +1121,10 @@ window.onload = async () => {
         alert("Unable to load application configuration. Please check your network and try again.");
         return;
     }
+    attachTableDelegate();
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
+        const originalLabel = loginBtn.textContent;
         loginBtn.onclick = async () => {
             const email = document.getElementById('loginEmail').value;
             const pass = document.getElementById('loginPass').value;
@@ -1112,7 +1132,7 @@ window.onload = async () => {
                 loginBtn.textContent = "Verifying...";
                 await signInWithEmailAndPassword(auth, email, pass);
             } catch (err) {
-                loginBtn.textContent = "Access Dashboard";
+                loginBtn.textContent = originalLabel;
                 alert("Invalid Credentials");
             }
         };
@@ -1146,19 +1166,25 @@ window.onload = async () => {
         try {
             let finalImageUrl = currentImageData;
             if (currentImageData && currentImageData.startsWith('data:image')) {
-                showToast("Compressing image...");
-                const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
-                const blob = await (await fetch(compressedDataUrl)).blob();
-                const formData = new FormData();
-                formData.append("image", blob, "repair.jpg");
-                showToast("Saving to Entry-Book...");
-                const res = await fetch(`${WORKER_URL}/upload`, {
-                    method: "POST",
-                    body: formData
-                });
-                const result = await res.json();
-                if (result.success) finalImageUrl = result.data.url;
-                else throw new Error("ImgBB upload failed");
+                try {
+                    showToast("Compressing image...");
+                    const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
+                    const blob = await (await fetch(compressedDataUrl)).blob();
+                    const uploadFd = new FormData();
+                    uploadFd.append("image", blob, "repair.jpg");
+                    showToast("Saving to Entry-Book...");
+                    const res = await fetch(`${WORKER_URL}/upload`, {
+                        method: "POST",
+                        body: uploadFd
+                    });
+                    const result = await res.json();
+                    if (result.success) finalImageUrl = result.data.url;
+                    else throw new Error("ImgBB upload failed");
+                } catch (uploadErr) {
+                    console.error("Image upload failed:", uploadErr);
+                    finalImageUrl = "";
+                    showToast("Image upload failed – saving without photo", true);
+                }
             }
             let costVal = Number(document.getElementById('cost').value) || 0;
             let paidVal = Number(document.getElementById('paid').value) || 0;
@@ -1176,16 +1202,18 @@ window.onload = async () => {
                 updatedAt: new Date().toISOString()
             };
             const passwordInput = document.getElementById('devicePassword')?.value;
-            if (passwordInput && passwordInput.trim() !== "") formData.password = passwordInput;
+            formData.password = (passwordInput || '').trim();
             if (currentlyEditingId) {
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
                 let existingDate = null;
+                let prevStatus = "";
                 if (oldSnap.exists()) {
                     const oldData = oldSnap.data();
                     existingDate = oldData.date;
+                    prevStatus = oldData.status || "";
                     const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
-                    if (oldData.phone !== formData.phone) await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
+                    if ((oldData.phone || "") !== formData.phone) await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
                     if (Number(oldData.cost || 0) !== costVal) await logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle);
                     if (Number(oldData.paid || 0) !== paidVal) await logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle);
                 }
@@ -1199,15 +1227,24 @@ window.onload = async () => {
                     }
                 }
                 if (!existingDate) existingDate = getTodayBSDate();
-                const updatedData = { ...formData, status: isCompleted ? 'completed' : 'pending', date: existingDate };
+                const updatedData = { ...formData, status: prevStatus || (isCompleted ? 'completed' : 'pending'), date: existingDate };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
-                await syncToAlgolia(currentlyEditingId, updatedData);
-                showToast("Updated successfully (synced)");
+                const synced = await syncToAlgolia(currentlyEditingId, updatedData);
+                showToast(synced ? "Updated successfully (synced)" : "Updated – search sync failed", !synced);
                 const updatedRepair = { ...updatedData, id: currentlyEditingId };
                 updateSearchResultLocally(updatedRepair);
                 updateStats();
             } else {
                 let selectedDate = (currentView === 'day') ? new Date(currentDate) : new Date();
+                if (currentView === 'month' && typeof window.NepaliDate === 'function') {
+                    try {
+                        const bsDate = new NepaliDate(Number(currentNepaliYear), Number(currentNepaliMonth) - 1, 1);
+                        const adDate = bsDate.getAD ? bsDate.getAD() : null;
+                        if (adDate && !isNaN(adDate.getTime())) {
+                            selectedDate = new Date(adDate);
+                        }
+                    } catch (dateErr) { }
+                }
                 selectedDate.setHours(12,0,0,0);
                 const createdAtISO = selectedDate.toISOString();
                 let finalDateStr = "";
@@ -1219,8 +1256,8 @@ window.onload = async () => {
                 } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
                 const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
-                await syncToAlgolia(docRef.id, newEntry);
-                showToast("Repair added (synced)");
+                const synced = await syncToAlgolia(docRef.id, newEntry);
+                showToast(synced ? "Repair added (synced)" : "Repair added – search sync failed", !synced);
                 if (isSearchActive) {
                     await performSearch(currentSearchQuery);
                 } else {

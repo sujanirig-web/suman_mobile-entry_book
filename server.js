@@ -6,11 +6,13 @@ const path = require('path');
 const app = express();
 
 // Middleware
-app.use(cors({ origin: "*" }));
-app.use(express.json({ limit: '50mb' }));
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const DATA_FILE = path.join(__dirname, 'repairs.json');
+const BACKUP_FILE = path.join(__dirname, 'repairs.corrupt.bak.json');
+const UPDATABLE_FIELDS = ['customerName', 'phone', 'passcode', 'model', 'issue', 'status', 'totalAmount', 'paidAmount', 'paymentStatus', 'photo', 'createdAt'];
 
 // Ensure file exists
 const initFile = () => {
@@ -24,24 +26,35 @@ const readData = () => {
     initFile();
     try {
         const data = fs.readFileSync(DATA_FILE, 'utf8');
-        return JSON.parse(data || "[]");
+        const parsed = JSON.parse(data || "[]");
+        return Array.isArray(parsed) ? parsed : [];
     } catch (err) {
         console.error("Read error:", err);
+        try {
+            fs.copyFileSync(DATA_FILE, BACKUP_FILE);
+            console.error("Corrupt data backed up to", BACKUP_FILE);
+        } catch (backupErr) {
+            console.error("Backup failed:", backupErr);
+        }
         return [];
     }
 };
 
-// Write data safely
+// Write data safely (atomic: temp file + rename)
 const writeData = (data) => {
+    const tmpFile = DATA_FILE + '.tmp';
     try {
-        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2));
+        fs.renameSync(tmpFile, DATA_FILE);
+        return true;
     } catch (err) {
         console.error("Write error:", err);
+        return false;
     }
 };
 
 
-const generateId = () => Date.now().toString();
+const generateId = () => Date.now().toString() + Math.random().toString(36).slice(2, 7);
 
 //  ROUTES 
 app.get('/api/repairs', (req, res) => {
@@ -56,7 +69,8 @@ app.get('/api/repairs', (req, res) => {
 
 app.post('/api/repairs', (req, res) => {
     try {
-        const { customerName, phone } = req.body;
+        const customerName = String(req.body.customerName || "").trim();
+        const phone = String(req.body.phone || "").trim();
 
         // Basic validation
         if (!customerName || !phone) {
@@ -67,21 +81,23 @@ app.post('/api/repairs', (req, res) => {
 
         const newRepair = {
             id: generateId(),
-            customerName: req.body.customerName || "",
-            phone: req.body.phone || "",
-            passcode: req.body.passcode || "",
-            model: req.body.model || "",
-            issue: req.body.issue || "",
-            status: req.body.status || "pending",
-            totalAmount: req.body.totalAmount || 0,
-            paidAmount: req.body.paidAmount || 0,
-            paymentStatus: req.body.paymentStatus || "credit",
-            photo: req.body.photo || "",
-            createdAt: req.body.createdAt || new Date().toISOString()
+            customerName,
+            phone,
+            passcode: String(req.body.passcode || ""),
+            model: String(req.body.model || ""),
+            issue: String(req.body.issue || ""),
+            status: String(req.body.status || "pending"),
+            totalAmount: Math.max(0, Number(req.body.totalAmount) || 0),
+            paidAmount: Math.max(0, Number(req.body.paidAmount) || 0),
+            paymentStatus: String(req.body.paymentStatus || "credit"),
+            photo: String(req.body.photo || ""),
+            createdAt: String(req.body.createdAt || new Date().toISOString())
         };
 
         data.push(newRepair);
-        writeData(data);
+        if (!writeData(data)) {
+            return res.status(500).json({ error: "Failed to persist repair" });
+        }
 
         res.status(201).json(newRepair);
     } catch (err) {
@@ -99,13 +115,24 @@ app.put('/api/repairs/:id', (req, res) => {
             return res.status(404).json({ error: "Repair not found" });
         }
 
+        const updates = {};
+        for (const field of UPDATABLE_FIELDS) {
+            if (req.body[field] !== undefined) updates[field] = req.body[field];
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: "No valid fields to update" });
+        }
+
         data[index] = {
             ...data[index],
-            ...req.body,
+            ...updates,
             id: data[index].id // prevent ID overwrite
         };
 
-        writeData(data);
+        if (!writeData(data)) {
+            return res.status(500).json({ error: "Failed to persist update" });
+        }
 
         res.json(data[index]);
     } catch (err) {
@@ -123,7 +150,9 @@ app.delete('/api/repairs/:id', (req, res) => {
             return res.status(404).json({ error: "Repair not found" });
         }
 
-        writeData(newData);
+        if (!writeData(newData)) {
+            return res.status(500).json({ error: "Failed to persist delete" });
+        }
 
         res.json({ message: "Deleted successfully" });
     } catch (err) {
@@ -137,8 +166,8 @@ app.get('/api/fix-ids', (req, res) => {
         let data = readData();
 
         data = data.map(item => ({
-            id: item.id || generateId() + Math.random(),
-            ...item
+            ...item,
+            id: item.id || generateId()
         }));
 
         writeData(data);
@@ -150,7 +179,7 @@ app.get('/api/fix-ids', (req, res) => {
 });
 
 // SERVER 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(` Server running on http://localhost:${PORT}`);

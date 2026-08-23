@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="format-detection" content="telephone=no">
-    <title>RE-LiFE | ENTRY-BOOK-1.2</title>
+    <title>RE-LiFE | ENTRY-BOOK-1.5</title>
     <script src="https://unpkg.com/nepali-date-converter@3.3.3/dist/nepali-date-converter.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/algoliasearch@4"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -95,7 +95,7 @@
                 </div>
                 <div>
                     <h1 class="text-xl font-bold text-green-600">RE-LiFE</h1>
-                    <span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">ENTRY-BOOK_1.2</span>
+                    <span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">ENTRY-BOOK_1.5</span>
                 </div>
             </div>
             <button onclick="toggleModal('entryModal')" class="bg-green-600 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-green-700 transition-all flex items-center shadow-lg shadow-green-100 active:scale-95">
@@ -182,6 +182,7 @@
             <div id="noDataMessage" class="hidden py-20 text-center text-slate-400">No repairs found</div>
         </div>
         <div id="paginationBottom" class="mt-4"></div>
+        <div id="loadMoreContainer"></div>
     </main>
 
     <div id="entryModal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-5 modal-ios">
@@ -257,17 +258,20 @@
                     window.toggleModal = function(id) {
                         const modal = document.getElementById(id);
                         if (!modal) return;
+                        if (modal.dataset.animating === '1') return;
 
                         const isOpen = !modal.classList.contains('hidden') && modal.classList.contains('active');
 
                         if (isOpen) {
                             
+                            modal.dataset.animating = '1';
                             modal.classList.remove('active');
                             const duration = 500;
                             setTimeout(() => {
                                 originalToggle.call(window, id);
                                 if (!modal.classList.contains('hidden')) modal.classList.add('hidden');
                                 document.body.style.overflow = 'auto';
+                                delete modal.dataset.animating;
                             }, duration);
                         } else {
                             
