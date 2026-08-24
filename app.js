@@ -1,7 +1,30 @@
 //app.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc, limit, where, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+// Inline SVG icons (Font Awesome Free 6.4.0 solid, CC BY 4.0) – replaces the 140KB FA CSS/webfont bundle
+const ICONS = {
+    book: ["448 512", "M96 0C43 0 0 43 0 96V416c0 53 43 96 96 96H384h32c17.7 0 32-14.3 32-32s-14.3-32-32-32V384c17.7 0 32-14.3 32-32V32c0-17.7-14.3-32-32-32H384 96zm0 384H352v64H96c-17.7 0-32-14.3-32-32s14.3-32 32-32zm32-240c0-8.8 7.2-16 16-16H336c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16zm16 48H336c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16s7.2-16 16-16z"],
+    plusCircle: ["512 512", "M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM232 344V280H168c-13.3 0-24-10.7-24-24s10.7-24 24-24h64V168c0-13.3 10.7-24 24-24s24 10.7 24 24v64h64c13.3 0 24 10.7 24 24s-10.7 24-24 24H280v64c0 13.3-10.7 24-24 24s-24-10.7-24-24z"],
+    times: ["384 512", "M342.6 150.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192 210.7 86.6 105.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L146.7 256 41.4 361.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192 301.3 297.4 406.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.3 256 342.6 150.6z"],
+    layerGroup: ["576 512", "M264.5 5.2c14.9-6.9 32.1-6.9 47 0l218.6 101c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0L45.9 149.8C37.4 145.8 32 137.3 32 128s5.4-17.9 13.9-21.8L264.5 5.2zM476.9 209.6l53.2 24.6c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0L45.9 277.8C37.4 273.8 32 265.3 32 256s5.4-17.9 13.9-21.8l53.2-24.6 152 70.2c23.4 10.8 50.4 10.8 73.8 0l152-70.2zm-152 198.2l152-70.2 53.2 24.6c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0L45.9 405.8C37.4 401.8 32 393.3 32 384s5.4-17.9 13.9-21.8l53.2-24.6 152 70.2c23.4 10.8 50.4 10.8 73.8 0z"],
+    clock: ["512 512", "M256 0a256 256 0 1 1 0 512A256 256 0 1 1 256 0zM232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z"],
+    circleCheck: ["512 512", "M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM369 209L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z"],
+    undoAlt: ["512 512", "M125.7 160H176c17.7 0 32 14.3 32 32s-14.3 32-32 32H48c-17.7 0-32-14.3-32-32V64c0-17.7 14.3-32 32-32s32 14.3 32 32v51.2L97.6 97.6c87.5-87.5 229.3-87.5 316.8 0s87.5 229.3 0 316.8s-229.3 87.5-316.8 0c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0c62.5 62.5 163.8 62.5 226.3 0s62.5-163.8 0-226.3s-163.8-62.5-226.3 0L125.7 160z"],
+    edit: ["512 512", "M471.6 21.7c-21.9-21.9-57.3-21.9-79.2 0L362.3 51.7l97.9 97.9 30.1-30.1c21.9-21.9 21.9-57.3 0-79.2L471.6 21.7zm-299.2 220c-6.1 6.1-10.8 13.6-13.5 21.9l-29.6 88.8c-2.9 8.6-.6 18.1 5.8 24.6s15.9 8.7 24.6 5.8l88.8-29.6c8.2-2.7 15.7-7.4 21.9-13.5L437.7 172.3 339.7 74.3 172.4 241.7zM96 64C43 64 0 107 0 160V416c0 53 43 96 96 96H352c53 0 96-43 96-96V320c0-17.7-14.3-32-32-32s-32 14.3-32 32v96c0 17.7-14.3 32-32 32H96c-17.7 0-32-14.3-32-32V160c0-17.7 14.3-32 32-32h96c17.7 0 32-14.3 32-32s-14.3-32-32-32H96z"],
+    trash: ["448 512", "M135.2 17.7L128 32H32C14.3 32 0 46.3 0 64S14.3 96 32 96H416c17.7 0 32-14.3 32-32s-14.3-32-32-32H320l-7.2-14.3C307.4 6.8 296.3 0 284.2 0H163.8c-12.1 0-23.2 6.8-28.6 17.7zM416 128H32L53.2 467c1.6 25.3 22.6 45 47.9 45H346.9c25.3 0 46.3-19.7 47.9-45L416 128z"],
+    images: ["576 512", "M160 32c-35.3 0-64 28.7-64 64V320c0 35.3 28.7 64 64 64H512c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H160zM396 138.7l96 144c4.9 7.4 5.4 16.8 1.2 24.6S480.9 320 472 320H328 280 200c-9.2 0-17.6-5.3-21.6-13.6s-2.9-18.2 2.9-25.4l64-80c4.6-5.7 11.4-9 18.7-9s14.2 3.3 18.7 9l17.3 21.6 56-84C360.5 132 368 128 376 128s15.5 4 20 10.7zM192 128a32 32 0 1 1 64 0 32 32 0 1 1 -64 0zM48 120c0-13.3-10.7-24-24-24S0 106.7 0 120V344c0 75.1 60.9 136 136 136H456c13.3 0 24-10.7 24-24s-10.7-24-24-24H136c-48.6 0-88-39.4-88-88V120z"],
+    camera: ["512 512", "M149.1 64.8L138.7 96H64C28.7 96 0 124.7 0 160V416c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V160c0-35.3-28.7-64-64-64H373.3L362.9 64.8C356.4 45.2 338.1 32 317.4 32H194.6c-20.7 0-39 13.2-45.5 32.8zM256 192a96 96 0 1 1 0 192 96 96 0 1 1 0-192z"],
+    handHoldingDollar: ["576 512", "M312 24V34.5c6.4 1.2 12.6 2.7 18.2 4.2c12.8 3.4 20.4 16.6 17 29.4s-16.6 20.4-29.4 17c-10.9-2.9-21.1-4.9-30.2-5c-7.3-.1-14.7 1.7-19.4 4.4c-2.1 1.3-3.1 2.4-3.5 3c-.3 .5-.7 1.2-.7 2.8c0 .3 0 .5 0 .6c.2 .2 .9 1.2 3.3 2.6c5.8 3.5 14.4 6.2 27.4 10.1l.9 .3 0 0c11.1 3.3 25.9 7.8 37.9 15.3c13.7 8.6 26.1 22.9 26.4 44.9c.3 22.5-11.4 38.9-26.7 48.5c-6.7 4.1-13.9 7-21.3 8.8V232c0 13.3-10.7 24-24 24s-24-10.7-24-24V220.6c-9.5-2.3-18.2-5.3-25.6-7.8c-2.1-.7-4.1-1.4-6-2c-12.6-4.2-19.4-17.8-15.2-30.4s17.8-19.4 30.4-15.2c2.6 .9 5 1.7 7.3 2.5c13.6 4.6 23.4 7.9 33.9 8.3c8 .3 15.1-1.6 19.2-4.1c1.9-1.2 2.8-2.2 3.2-2.9c.4-.6 .9-1.8 .8-4.1l0-.2c0-1 0-2.1-4-4.6c-5.7-3.6-14.3-6.4-27.1-10.3l-1.9-.6c-10.8-3.2-25-7.5-36.4-14.4c-13.5-8.1-26.5-22-26.6-44.1c-.1-22.9 12.9-38.6 27.7-47.4c6.4-3.8 13.3-6.4 20.2-8.2V24c0-13.3 10.7-24 24-24s24 10.7 24 24zM568.2 336.3c13.1 17.8 9.3 42.8-8.5 55.9L433.1 485.5c-23.4 17.2-51.6 26.5-80.7 26.5H192 32c-17.7 0-32-14.3-32-32V416c0-17.7 14.3-32 32-32H68.8l44.9-36c22.7-18.2 50.9-28 80-28H272h16 64c17.7 0 32 14.3 32 32s-14.3 32-32 32H288 272c-8.8 0-16 7.2-16 16s7.2 16 16 16H392.6l119.7-88.2c17.8-13.1 42.8-9.3 55.9 8.5zM193.6 384l0 0-.9 0c.3 0 .6 0 .9 0z"],
+    history: ["512 512", "M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"],
+    chevronDown: ["512 512", "M233.4 406.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L256 338.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"]
+};
+
+function icon(name, cls = "") {
+    const [vb, d] = ICONS[name];
+    return `<svg${cls ? ` class="${cls}"` : ""} viewBox="0 0 ${vb}" width="1em" height="1em" fill="currentColor" aria-hidden="true" style="vertical-align:-0.125em"><path d="${d}"/></svg>`;
+}
 
 const WORKER_URL = 'https://relife-api-proxy.sujanirig.workers.dev';
 
@@ -16,11 +39,13 @@ let currentNepaliYear = 2082;
 let currentNepaliMonth = 1;
 let currentView = 'day';
 let currentImageData = null;
+let preImg = { tag: "", compressed: "", url: "", promise: null };
 let currentlyEditingId = null;
 let unsubscribe = null;
 let currentSearchQuery = "";
 let searchDebounceTimer = null;
 let searchSeq = 0;
+let searchAbortController = null;
 let isLoading = false;
 
 let currentPage = 1;
@@ -39,7 +64,8 @@ let revenueCensored = true;
 let dueCensored = true;
 let revenueTimer = null;
 let dueTimer = null;
-let globalMaxSN = 0;  
+let globalMaxSN = 0;
+let serialCounterReady = false;
 
 function algoliaSafe(data) {
     const clone = { ...data };
@@ -253,8 +279,8 @@ async function loadConfig() {
                 const { year, month } = adToBsYearMonth(new Date());
                 currentNepaliYear = Number(year);
                 currentNepaliMonth = Number(month);
-                currentPage = 1; 
-                loadData();
+                currentPage = 1;
+                ensureSerialCounter().finally(() => loadData());
             } else {
                 overlay.style.display = 'flex';
                 if (unsubscribe) { unsubscribe(); unsubscribe = null; }
@@ -277,16 +303,89 @@ function getDayRange(date) {
     return { start, end };
 }
 
+function isoDayBounds(date) {
+    const start = new Date(date); start.setHours(0,0,0,0);
+    const end = new Date(start); end.setDate(end.getDate() + 1);
+    return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function bsMonthBounds(year, month) {
+    try {
+        if (typeof window.NepaliDate !== 'function') return null;
+        const startAD = new NepaliDate(Number(year), Number(month) - 1, 1).getAD();
+        let ny = Number(year), nm = Number(month) + 1;
+        if (nm > 12) { nm = 1; ny++; }
+        const endAD = new NepaliDate(ny, nm - 1, 1).getAD();
+        if (!startAD || !endAD || isNaN(startAD.getTime()) || isNaN(endAD.getTime())) return null;
+        return { start: startAD.toISOString(), end: endAD.toISOString() };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function ensureSerialCounter() {
+    if (serialCounterReady || !db) return;
+    try {
+        const snap = await getDoc(doc(db, "counters", "serial"));
+        if (snap.exists()) {
+            globalMaxSN = Math.max(globalMaxSN, Number(snap.data().max) || 0);
+        } else {
+            const recent = await getDocs(query(collection(db, "repairs"), orderBy("createdAt", "desc"), limit(300)));
+            let mx = 0;
+            recent.forEach(d => { const n = parseInt(d.data().sn, 10); if (!isNaN(n) && n > mx) mx = n; });
+            globalMaxSN = Math.max(globalMaxSN, mx);
+            await setDoc(doc(db, "counters", "serial"), { max: globalMaxSN });
+        }
+        serialCounterReady = true;
+    } catch (e) {
+        console.warn("Serial counter unavailable – falling back to loaded records:", e);
+    }
+}
+
+window.fixLegacyDates = async function () {
+    if (!confirm("Scan all records and normalize old date formats?\nThis fixes entries created by older versions so date filtering stays accurate. Run once.")) return;
+    showToast("Scanning records...");
+    try {
+        const snap = await getDocs(collection(db, "repairs"));
+        let fixed = 0;
+        const ops = [];
+        snap.forEach(d => {
+            const v = d.data().createdAt;
+            let iso = null;
+            if (typeof v === "string") {
+                if (!/^\d{4}-\d{2}-\d{2}T/.test(v)) {
+                    const p = new Date(v);
+                    if (!isNaN(p.getTime())) iso = p.toISOString();
+                }
+            } else if (v && typeof v.seconds === "number") {
+                iso = new Date(v.seconds * 1000).toISOString();
+            }
+            if (iso) { ops.push(updateDoc(d.ref, { createdAt: iso })); fixed++; }
+        });
+        if (ops.length) await Promise.all(ops);
+        showToast(`Checked ${snap.size} records – normalized ${fixed}`);
+        if (fixed > 0 && auth.currentUser) loadData();
+    } catch (err) {
+        console.error("fixLegacyDates failed:", err);
+        showToast("Fix failed – see console", true);
+    }
+};
+
 
 function loadData() {
     if (unsubscribe) unsubscribe();
-    const q = query(collection(db, "repairs"));
+    let bounds = null;
+    if (currentView === 'day') bounds = isoDayBounds(currentDate);
+    else if (currentView === 'month') bounds = bsMonthBounds(currentNepaliYear, currentNepaliMonth);
+    const q = bounds
+        ? query(collection(db, "repairs"), where("createdAt", ">=", bounds.start), where("createdAt", "<", bounds.end))
+        : query(collection(db, "repairs"));
     isLoading = true;
     showLoadingSpinner(true);
     unsubscribe = onSnapshot(q, (snapshot) => {
         const allData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
-        
+
         let maxSN = 0;
         for (const r of allData) {
             const num = parseInt(r.sn, 10);
@@ -294,7 +393,7 @@ function loadData() {
                 maxSN = num;
             }
         }
-        globalMaxSN = maxSN;
+        globalMaxSN = Math.max(globalMaxSN, maxSN);
 
         if (currentView === 'day') {
             const { start, end } = getDayRange(currentDate);
@@ -577,6 +676,38 @@ window.toggleModal = function (id) {
         }
     }
 };
+function uploadImageBlob(blob) {
+    const fd = new FormData();
+    fd.append("image", blob, "repair.jpg");
+    return fetch(`${WORKER_URL}/upload`, { method: "POST", body: fd })
+        .then(res => res.json())
+        .then(result => {
+            if (result && result.success) return result.data;
+            throw new Error("ImgBB upload failed");
+        });
+}
+
+// Pre-compress + pre-upload in the background right after a photo is picked.
+// Pure optimization: submit still runs the original flow whenever results are missing.
+function preProcessImage(dataUrl) {
+    preImg = { tag: "", compressed: "", url: "", promise: null };
+    if (!dataUrl || !dataUrl.startsWith('data:image')) return;
+    const tag = dataUrl;
+    preImg.tag = tag;
+    compressImage(dataUrl, 1024, 0.7).then(compressed => {
+        if (currentImageData !== tag || !compressed || compressed === dataUrl) return;
+        preImg.compressed = compressed;
+        preImg.promise = fetch(compressed).then(r => r.blob()).then(uploadImageBlob).then(data => {
+            if (currentImageData !== tag) return null;
+            preImg.url = data.url || "";
+            return data;
+        }).catch(err => {
+            console.warn("Background photo upload failed – will retry on save:", err);
+            return null;
+        });
+    }).catch(() => {});
+}
+
 window.handleImageUpload = function (input) {
     const file = input.files[0];
     if (!file) return;
@@ -592,11 +723,13 @@ window.handleImageUpload = function (input) {
         const previewDiv = document.getElementById('imagePreview');
         if (previewImg) previewImg.src = currentImageData;
         if (previewDiv) previewDiv.classList.remove('hidden');
+        preProcessImage(currentImageData);
     };
     reader.readAsDataURL(file);
 };
 window.removeImage = function () {
     currentImageData = null;
+    preImg = { tag: "", compressed: "", url: "", promise: null };
     const previewDiv = document.getElementById('imagePreview');
     if (previewDiv) previewDiv.classList.add('hidden');
     const gallery = document.getElementById('photoGallery');
@@ -610,8 +743,15 @@ window.viewImage = function (src) {
     if (fullImg) fullImg.src = src;
     if (modal) modal.classList.remove('hidden');
 };
-window.jumpToRepairDate = function (repair) {
-    if (!repair.createdAt) return;
+window.jumpToRepairDate = async function (repair) {
+    if (!repair) return;
+    if (!repair.createdAt && repair.id && db) {
+        try {
+            const snap = await getDoc(doc(db, "repairs", repair.id));
+            if (snap.exists()) repair = { ...snap.data(), id: snap.id };
+        } catch (e) { console.error("Jump lookup failed:", e); }
+    }
+    if (!repair.createdAt) { showToast("This record has no date info", true); return; }
     let d = typeof repair.createdAt === "string" ? new Date(repair.createdAt) : repair.createdAt.seconds ? new Date(repair.createdAt.seconds * 1000) : null;
     if (!d || isNaN(d)) return;
     if (currentView === 'day') currentDate = d;
@@ -621,9 +761,7 @@ window.jumpToRepairDate = function (repair) {
     showToast("Jumped to selected date");
 };
 window.jumpToRepairDateById = function (id) {
-    const r = repairs.find(x => x.id === id || x.objectID === id)
-           || displayedRepairs.find(x => x.id === id || x.objectID === id);
-
+    const r = findRepairAnywhere(id);
     if (r) window.jumpToRepairDate(r);
 };
 
@@ -759,10 +897,13 @@ async function performSearch(query) {
     isSearchActive = true;
     showLoadingSpinner(true);
     try {
+        if (searchAbortController) searchAbortController.abort();
+        searchAbortController = new AbortController();
         const response = await fetch(`${WORKER_URL}/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, page: 0, hitsPerPage: 200 })
+            body: JSON.stringify({ query, page: 0, hitsPerPage: 200 }),
+            signal: searchAbortController.signal
         });
         if (!response.ok) throw new Error(`Worker search failed: ${response.status}`);
         const res = await response.json();
@@ -813,6 +954,7 @@ async function performSearch(query) {
         if (hits.length === 0) showToast(`No results for "${query}"`);
         else showToast(`Found ${hits.length} result${hits.length !== 1 ? 's' : ''}`);
     } catch (err) {
+        if (err && err.name === 'AbortError') return;
         if (reqId !== searchSeq) return;
         console.error("Worker search error:", err);
         const sourceData = (currentView === 'month') ? fullMonthRepairs : repairs;
@@ -892,7 +1034,7 @@ function renderTable(data = repairs) {
             </td>
             <td class="px-6 py-6">
                 <div class="text-xs font-bold text-slate-600">${escHtml(repair.issue || '')}</div>
-                ${repair.image ? `<img src="${escHtml(repair.image)}" alt="" data-action="view" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
+                ${repair.image ? `<img src="${escHtml(repair.imageThumb || repair.image)}" data-full="${escHtml(repair.image)}" alt="" data-action="view" loading="lazy" decoding="async" width="40" height="40" class="mt-2 w-10 h-10 rounded-lg object-cover cursor-pointer border shadow-sm">` : ''}
               </td>
             <td class="px-6 py-6">
                 <button type="button" data-action="status" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${statusColor}">${escHtml(repair.status || 'pending')}</button>
@@ -903,10 +1045,10 @@ function renderTable(data = repairs) {
                 <div class="text-[11px] font-bold ${due > 0 ? 'text-red-600' : 'text-emerald-500'}">Due: रू${due.toLocaleString()}</div>
               </td>
             <td class="px-8 py-6 text-right space-x-3">
-                <button type="button" data-action="edit" class="text-slate-300 hover:text-indigo-600"><i class="fas fa-edit"></i></button>
-                <button type="button" data-action="delete" class="text-slate-300 hover:text-red-500"><i class="fas fa-trash"></i></button>
-             
-                ${repair.status !== 'returned' ? `<button type="button" data-action="return" class="text-slate-300 hover:text-green-600" title="Mark as Returned"><i class="fas fa-undo-alt"></i></button>` : ''}
+                <button type="button" data-action="edit" class="text-slate-300 hover:text-indigo-600">${icon('edit')}</button>
+                <button type="button" data-action="delete" class="text-slate-300 hover:text-red-500">${icon('trash')}</button>
+
+                ${repair.status !== 'returned' ? `<button type="button" data-action="return" class="text-slate-300 hover:text-green-600" title="Mark as Returned">${icon('undoAlt')}</button>` : ''}
              </td>
         `;
         fragment.appendChild(tr);
@@ -925,7 +1067,7 @@ function attachTableDelegate() {
         const row = el.closest('tr');
         const id = row ? row.dataset.id : null;
         switch (el.dataset.action) {
-            case 'view': window.viewImage(el.getAttribute('src')); break;
+            case 'view': window.viewImage(el.getAttribute('data-full') || el.getAttribute('src')); break;
             case 'jump': if (id) window.jumpToRepairDateById(id); break;
             case 'status': if (id) window.updateStatus(id); break;
             case 'edit': if (id) window.editRepair(id); break;
@@ -1009,13 +1151,16 @@ function toggleLogoMenu() {
         if (!iconDiv) return;
         menu = document.createElement('div');
         menu.id = 'logoDropdown';
-        menu.className = 'absolute mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-200 z-50 hidden';
+        menu.className = 'absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-200 z-50 hidden';
         menu.innerHTML = `
             <button onclick="event.stopPropagation(); showLogsModal(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-t-xl flex items-center gap-2">
-                <i class="fas fa-history text-slate-500"></i> 📜 View Logs
+                ${icon('history', 'text-slate-500')} 📜 View Logs
+            </button>
+            <button onclick="event.stopPropagation(); fixLegacyDates();" class="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-2">
+                🛠️ Normalize Dates (run once)
             </button>
             <button onclick="event.stopPropagation(); toggleLogoMenu();" class="w-full text-left px-4 py-3 hover:bg-slate-50 rounded-b-xl flex items-center gap-2">
-                <i class="fas fa-times text-slate-500"></i> Close
+                ${icon('times', 'text-slate-500')} Close
             </button>
         `;
         iconDiv.style.position = 'relative';
@@ -1112,7 +1257,7 @@ window.deleteRepair = async function (id) {
 };
 
 
-window.onload = async () => {
+(async () => {
     try {
         await loadConfig();
         console.log("✅ Config loaded, Algolia sync ready");
@@ -1165,21 +1310,35 @@ window.onload = async () => {
         showToast("Saving...");
         try {
             let finalImageUrl = currentImageData;
+            let finalThumbUrl = "";
             if (currentImageData && currentImageData.startsWith('data:image')) {
                 try {
-                    showToast("Compressing image...");
-                    const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
-                    const blob = await (await fetch(compressedDataUrl)).blob();
-                    const uploadFd = new FormData();
-                    uploadFd.append("image", blob, "repair.jpg");
-                    showToast("Saving to Entry-Book...");
-                    const res = await fetch(`${WORKER_URL}/upload`, {
-                        method: "POST",
-                        body: uploadFd
-                    });
-                    const result = await res.json();
-                    if (result.success) finalImageUrl = result.data.url;
-                    else throw new Error("ImgBB upload failed");
+                    const tag = currentImageData;
+                    const pre = (preImg.tag === tag) ? preImg : null;
+                    let uploadedData = pre ? (pre.url || "") : "";
+                    if (!uploadedData && pre && pre.promise) {
+                        showToast("Saving to Entry-Book...");
+                        uploadedData = (await pre.promise) || "";
+                    }
+                    if (!uploadedData) {
+                        let blob;
+                        if (pre && pre.compressed) {
+                            blob = await (await fetch(pre.compressed)).blob();
+                        } else {
+                            showToast("Compressing image...");
+                            const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
+                            blob = await (await fetch(compressedDataUrl)).blob();
+                        }
+                        showToast("Saving to Entry-Book...");
+                        uploadedData = await uploadImageBlob(blob).catch(err => {
+                            console.warn("Photo upload retrying after failure:", err);
+                            return uploadImageBlob(blob);
+                        });
+                    }
+                    if (uploadedData && uploadedData.url) {
+                        finalImageUrl = uploadedData.url;
+                        if (uploadedData.thumb && uploadedData.thumb.url) finalThumbUrl = uploadedData.thumb.url;
+                    } else throw new Error("ImgBB upload failed");
                 } catch (uploadErr) {
                     console.error("Image upload failed:", uploadErr);
                     finalImageUrl = "";
@@ -1189,7 +1348,7 @@ window.onload = async () => {
             let costVal = Number(document.getElementById('cost').value) || 0;
             let paidVal = Number(document.getElementById('paid').value) || 0;
             if (costVal === 0 && paidVal > 0) costVal = paidVal;
-            const isCompleted = paidVal > 0 && paidVal >= costVal;
+            const isCompleted = costVal > 0;
             const formData = {
                 customer: document.getElementById('customerName').value,
                 phone: document.getElementById('customerPhone').value,
@@ -1199,6 +1358,7 @@ window.onload = async () => {
                 cost: costVal,
                 paid: paidVal,
                 image: finalImageUrl,
+                ...(finalThumbUrl ? { imageThumb: finalThumbUrl } : {}),
                 updatedAt: new Date().toISOString()
             };
             const passwordInput = document.getElementById('devicePassword')?.value;
@@ -1206,6 +1366,7 @@ window.onload = async () => {
             if (currentlyEditingId) {
                 const oldDocRef = doc(db, "repairs", currentlyEditingId);
                 const oldSnap = await getDoc(oldDocRef);
+                const prevData = oldSnap.exists() ? oldSnap.data() : {};
                 let existingDate = null;
                 let prevStatus = "";
                 if (oldSnap.exists()) {
@@ -1213,9 +1374,11 @@ window.onload = async () => {
                     existingDate = oldData.date;
                     prevStatus = oldData.status || "";
                     const repairTitle = `${oldData.customer || ''} - ${oldData.device || ''}`;
-                    if ((oldData.phone || "") !== formData.phone) await logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle);
-                    if (Number(oldData.cost || 0) !== costVal) await logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle);
-                    if (Number(oldData.paid || 0) !== paidVal) await logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle);
+                    await Promise.all([
+                        ((oldData.phone || "") !== formData.phone) ? logChange(currentlyEditingId, "phone", oldData.phone || "", formData.phone, repairTitle) : null,
+                        (Number(oldData.cost || 0) !== costVal) ? logChange(currentlyEditingId, "cost", oldData.cost || 0, costVal, repairTitle) : null,
+                        (Number(oldData.paid || 0) !== paidVal) ? logChange(currentlyEditingId, "paid", oldData.paid || 0, paidVal, repairTitle) : null
+                    ].filter(Boolean));
                 }
                
                 if (!existingDate && oldSnap.exists() && oldSnap.data().createdAt) {
@@ -1227,7 +1390,7 @@ window.onload = async () => {
                     }
                 }
                 if (!existingDate) existingDate = getTodayBSDate();
-                const updatedData = { ...formData, status: prevStatus || (isCompleted ? 'completed' : 'pending'), date: existingDate };
+                const updatedData = { ...prevData, ...formData, status: (prevStatus === 'returned') ? 'returned' : (isCompleted ? 'completed' : (prevStatus || 'pending')), date: existingDate };
                 await updateDoc(doc(db, "repairs", currentlyEditingId), updatedData);
                 const synced = await syncToAlgolia(currentlyEditingId, updatedData);
                 showToast(synced ? "Updated successfully (synced)" : "Updated – search sync failed", !synced);
@@ -1256,6 +1419,11 @@ window.onload = async () => {
                 } catch(e) { finalDateStr = selectedDate.toLocaleDateString(); }
                 const newEntry = { ...formData, status: isCompleted ? 'completed' : 'pending', date: finalDateStr, createdAt: createdAtISO };
                 const docRef = await addDoc(collection(db, "repairs"), newEntry);
+                const parsedSn = parseInt(newEntry.sn, 10);
+                if (!isNaN(parsedSn) && parsedSn > globalMaxSN) {
+                    globalMaxSN = parsedSn;
+                    if (serialCounterReady) setDoc(doc(db, "counters", "serial"), { max: globalMaxSN }).catch(() => {});
+                }
                 const synced = await syncToAlgolia(docRef.id, newEntry);
                 showToast(synced ? "Repair added (synced)" : "Repair added – search sync failed", !synced);
                 if (isSearchActive) {
@@ -1275,4 +1443,4 @@ window.onload = async () => {
             isSubmitting = false;
         }
     };
-};
+})();
