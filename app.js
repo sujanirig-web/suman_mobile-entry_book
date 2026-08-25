@@ -323,22 +323,46 @@ function bsMonthBounds(year, month) {
     }
 }
 
-async function ensureSerialCounter() {
-    if (serialCounterReady || !db) return;
+// Re-check the highest serial ever used (all days, incl. previous days)
+async function refreshGlobalMaxSN() {
+    if (!db) return;
+    const prevMax = globalMaxSN;
     try {
         const snap = await getDoc(doc(db, "counters", "serial"));
         if (snap.exists()) {
             globalMaxSN = Math.max(globalMaxSN, Number(snap.data().max) || 0);
-        } else {
-            const recent = await getDocs(query(collection(db, "repairs"), orderBy("createdAt", "desc"), limit(300)));
-            let mx = 0;
-            recent.forEach(d => { const n = parseInt(d.data().sn, 10); if (!isNaN(n) && n > mx) mx = n; });
-            globalMaxSN = Math.max(globalMaxSN, mx);
-            await setDoc(doc(db, "counters", "serial"), { max: globalMaxSN });
         }
-        serialCounterReady = true;
     } catch (e) {
-        console.warn("Serial counter unavailable – falling back to loaded records:", e);
+        console.warn("Serial counter read failed:", e);
+    }
+    try {
+        const recent = await getDocs(query(collection(db, "repairs"), orderBy("createdAt", "desc"), limit(200)));
+        let mx = 0;
+        recent.forEach(d => {
+            const n = parseInt(d.data().sn, 10);
+            if (!isNaN(n) && n > mx) mx = n;
+        });
+        if (mx > globalMaxSN) globalMaxSN = mx;
+        serialCounterReady = true;
+        if (globalMaxSN !== prevMax) {
+            setDoc(doc(db, "counters", "serial"), { max: globalMaxSN }).catch(() => {});
+        }
+    } catch (e) {
+        console.warn("Previous-day SN check failed – using known max:", e);
+    }
+}
+
+async function ensureSerialCounter() {
+    if (serialCounterReady || !db) return;
+    await refreshGlobalMaxSN();
+}
+
+async function isSnTaken(snStr) {
+    try {
+        const snap = await getDocs(query(collection(db, "repairs"), where("sn", "==", String(snStr)), limit(1)));
+        return !snap.empty;
+    } catch (e) {
+        return false;
     }
 }
 
@@ -658,8 +682,14 @@ window.toggleModal = function (id) {
         if (id === 'entryModal' && currentlyEditingId === null) {
             const snField = document.getElementById('snNumber');
             if (snField) {
-                const nextSN = getNextSerialNumber();
-                snField.value = nextSN;
+                snField.value = getNextSerialNumber();
+                refreshGlobalMaxSN().then(() => {
+                    const current = parseInt(snField.value, 10);
+                    const suggested = parseInt(getNextSerialNumber(), 10);
+                    if (!isNaN(suggested) && (isNaN(current) || suggested > current)) {
+                        snField.value = String(suggested);
+                    }
+                }).catch(() => {});
             }
         }
     } else {
@@ -1398,6 +1428,18 @@ window.deleteRepair = async function (id) {
                 updateSearchResultLocally(updatedRepair);
                 updateStats();
             } else {
+                try {
+                    await refreshGlobalMaxSN();
+                    let guard = 0;
+                    while (guard++ < 50 && formData.sn && await isSnTaken(formData.sn)) {
+                        const bumped = getNextSerialNumber();
+                        document.getElementById('snNumber').value = bumped;
+                        formData.sn = bumped;
+                        showToast(`SN already used (previous day) – adjusted to #${bumped}`);
+                    }
+                } catch (snErr) {
+                    console.warn("SN auto-check skipped:", snErr);
+                }
                 let selectedDate = (currentView === 'day') ? new Date(currentDate) : new Date();
                 if (currentView === 'month' && typeof window.NepaliDate === 'function') {
                     try {
