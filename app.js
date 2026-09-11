@@ -1344,24 +1344,14 @@ window.deleteRepair = async function (id) {
             if (currentImageData && currentImageData.startsWith('data:image')) {
                 try {
                     const tag = currentImageData;
-                    const pre = (preImg.tag === tag) ? preImg : null;
-                    let uploadedData = pre ? (pre.url || "") : "";
-                    if (!uploadedData && pre && pre.promise) {
-                        showToast("Saving to Entry-Book...");
-                        uploadedData = (await pre.promise) || "";
-                    }
+                    const pre = preImg.tag === tag && preImg.promise ? preImg : null;
+                    let uploadedData = pre && pre.url ? pre.url : "";
                     if (!uploadedData) {
-                        let blob;
-                        if (pre && pre.compressed) {
-                            blob = await (await fetch(pre.compressed)).blob();
-                        } else {
-                            showToast("Compressing image...");
-                            const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
-                            blob = await (await fetch(compressedDataUrl)).blob();
-                        }
-                        showToast("Saving to Entry-Book...");
+                        showToast("Compressing and uploading image...");
+                        const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
+                        const blob = await (await fetch(compressedDataUrl)).blob();
                         uploadedData = await uploadImageBlob(blob).catch(err => {
-                            console.warn("Photo upload retrying after failure:", err);
+                            console.warn("Photo upload failed, retrying...", err);
                             return uploadImageBlob(blob);
                         });
                     }
