@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs, getDoc, limit, where, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-// Inline SVG icons (Font Awesome Free 6.4.0 solid, CC BY 4.0) – replaces the 140KB FA CSS/webfont bundle
+
 const ICONS = {
     book: ["448 512", "M96 0C43 0 0 43 0 96V416c0 53 43 96 96 96H384h32c17.7 0 32-14.3 32-32s-14.3-32-32-32V384c17.7 0 32-14.3 32-32V32c0-17.7-14.3-32-32-32H384 96zm0 384H352v64H96c-17.7 0-32-14.3-32-32s14.3-32 32-32zm32-240c0-8.8 7.2-16 16-16H336c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16zm16 48H336c8.8 0 16 7.2 16 16s-7.2 16-16 16H144c-8.8 0-16-7.2-16-16s7.2-16 16-16z"],
     plusCircle: ["512 512", "M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM232 344V280H168c-13.3 0-24-10.7-24-24s10.7-24 24-24h64V168c0-13.3 10.7-24 24-24s24 10.7 24 24v64h64c13.3 0 24 10.7 24 24s-10.7 24-24 24H280v64c0 13.3-10.7 24-24 24s-24-10.7-24-24z"],
@@ -323,7 +323,7 @@ function bsMonthBounds(year, month) {
     }
 }
 
-// Re-check the highest serial ever used (all days, incl. previous days)
+
 async function refreshGlobalMaxSN() {
     if (!db) return;
     const prevMax = globalMaxSN;
@@ -717,8 +717,7 @@ function uploadImageBlob(blob) {
         });
 }
 
-// Pre-compress + pre-upload in the background right after a photo is picked.
-// Pure optimization: submit still runs the original flow whenever results are missing.
+
 function preProcessImage(dataUrl) {
     preImg = { tag: "", compressed: "", url: "", promise: null };
     if (!dataUrl || !dataUrl.startsWith('data:image')) return;
