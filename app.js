@@ -39,6 +39,7 @@ let currentNepaliYear = 2082;
 let currentNepaliMonth = 1;
 let currentView = 'day';
 let currentImageData = null;
+let currentImageFile = null;
 let preImg = { tag: "", compressed: "", url: "", promise: null };
 let currentlyEditingId = null;
 let unsubscribe = null;
@@ -708,7 +709,8 @@ window.toggleModal = function (id) {
 };
 function uploadImageBlob(blob) {
     const fd = new FormData();
-    fd.append("image", blob, "repair.jpg");
+    const filename = (blob instanceof File && blob.name) ? blob.name : "repair.jpg";
+    fd.append("image", blob, filename);
     return fetch(`${WORKER_URL}/upload`, { method: "POST", body: fd })
         .then(res => res.json())
         .then(result => {
@@ -720,13 +722,21 @@ function uploadImageBlob(blob) {
 
 function preProcessImage(dataUrl) {
     preImg = { tag: "", compressed: "", url: "", promise: null };
-    if (!dataUrl || !dataUrl.startsWith('data:image')) return;
+    if (!dataUrl || !dataUrl.startsWith('data:')) return;
     const tag = dataUrl;
     preImg.tag = tag;
     compressImage(dataUrl, 1024, 0.7).then(compressed => {
-        if (currentImageData !== tag || !compressed || compressed === dataUrl) return;
+        if (currentImageData !== tag || !compressed) return;
+        let blobPromise;
+        if (compressed !== dataUrl) {
+            blobPromise = fetch(compressed).then(r => r.blob());
+        } else if (currentImageFile) {
+            blobPromise = Promise.resolve(currentImageFile);
+        } else {
+            return;
+        }
         preImg.compressed = compressed;
-        preImg.promise = fetch(compressed).then(r => r.blob()).then(uploadImageBlob).then(data => {
+        preImg.promise = blobPromise.then(uploadImageBlob).then(data => {
             if (currentImageData !== tag) return null;
             preImg.url = data.url || "";
             return data;
@@ -745,6 +755,7 @@ window.handleImageUpload = function (input) {
         input.value = '';
         return;
     }
+    currentImageFile = file;
     const reader = new FileReader();
     reader.onload = function (e) {
         currentImageData = e.target.result;
@@ -758,6 +769,7 @@ window.handleImageUpload = function (input) {
 };
 window.removeImage = function () {
     currentImageData = null;
+    currentImageFile = null;
     preImg = { tag: "", compressed: "", url: "", promise: null };
     const previewDiv = document.getElementById('imagePreview');
     if (previewDiv) previewDiv.classList.add('hidden');
@@ -1340,7 +1352,7 @@ window.deleteRepair = async function (id) {
         try {
             let finalImageUrl = currentImageData;
             let finalThumbUrl = "";
-            if (currentImageData && currentImageData.startsWith('data:image')) {
+            if (currentImageData && currentImageData.startsWith('data:')) {
                 try {
                     const tag = currentImageData;
                     const pre = preImg.tag === tag && preImg.promise ? preImg : null;
@@ -1348,7 +1360,14 @@ window.deleteRepair = async function (id) {
                     if (!uploadedData) {
                         showToast("Compressing and uploading image...");
                         const compressedDataUrl = await compressImage(currentImageData, 1024, 0.7);
-                        const blob = await (await fetch(compressedDataUrl)).blob();
+                        let blob;
+                        if (compressedDataUrl !== currentImageData) {
+                            blob = await (await fetch(compressedDataUrl)).blob();
+                        } else if (currentImageFile) {
+                            blob = currentImageFile;
+                        } else {
+                            blob = await (await fetch(currentImageData)).blob();
+                        }
                         uploadedData = await uploadImageBlob(blob).catch(err => {
                             console.warn("Photo upload failed, retrying...", err);
                             return uploadImageBlob(blob);
