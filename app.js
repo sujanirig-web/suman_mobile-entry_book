@@ -26,7 +26,7 @@ function icon(name, cls = "") {
     return `<svg${cls ? ` class="${cls}"` : ""} viewBox="0 0 ${vb}" width="1em" height="1em" fill="currentColor" aria-hidden="true" style="vertical-align:-0.125em"><path d="${d}"/></svg>`;
 }
 
-const WORKER_URL = 'https://relife-api-proxy.sujanirig.workers.dev';
+const WORKER_URL = 'https://broad-wood-9d60.sm8144632.workers.dev';
 
 let db, auth, algoliaAppId;
 
@@ -263,9 +263,9 @@ async function loadConfig() {
         apiKey: config.firebaseApiKey,
         authDomain: config.firebaseAuthDomain,
         projectId: config.firebaseProjectId,
-        storageBucket: "relife-entry-book.firebasestorage.app",
-        messagingSenderId: "736685646269",
-        appId: "1:736685646269:web:387441b954cd4f123f72d4"
+        storageBucket: "suman-mobile.firebasestorage.app",
+        messagingSenderId: "371457567486",
+        appId: "1:371457567486:web:ef16d6041f5ada011113af"
     };
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
