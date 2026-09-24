@@ -396,6 +396,36 @@ window.fixLegacyDates = async function () {
     }
 };
 
+window.backfillMissingSerial = async function () {
+    if (!confirm("Scan all records and add a serial number (sn) to any entry missing one?\nEntries created by older versions get numbered so the serial shows in Firestore. Run once.")) return;
+    showToast("Scanning records...");
+    try {
+        await refreshGlobalMaxSN();
+        const snap = await getDocs(query(collection(db, "repairs"), orderBy("createdAt", "asc")));
+        let next = globalMaxSN + 1;
+        const ops = [];
+        snap.forEach(d => {
+            const data = d.data();
+            const n = parseInt(data.sn, 10);
+            if (data.sn === undefined || data.sn === null || data.sn === "" || isNaN(n)) {
+                ops.push(updateDoc(d.ref, { sn: String(next++) }));
+            } else if (!isNaN(n) && n >= next) {
+                next = n + 1;
+            }
+        });
+        if (ops.length) await Promise.all(ops);
+        if (next - 1 > globalMaxSN) {
+            globalMaxSN = next - 1;
+            if (serialCounterReady) setDoc(doc(db, "counters", "serial"), { max: globalMaxSN }).catch(() => {});
+        }
+        showToast(`Checked ${snap.size} records – assigned ${ops.length} serial numbers`);
+        if (ops.length > 0 && auth.currentUser) loadData();
+    } catch (err) {
+        console.error("backfillMissingSerial failed:", err);
+        showToast("Backfill failed – see console", true);
+    }
+};
+
 
 function loadData() {
     if (unsubscribe) unsubscribe();
