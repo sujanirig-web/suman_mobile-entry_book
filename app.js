@@ -669,6 +669,8 @@ window.toggleViewMode = function () {
     loadData();
     const icon = document.getElementById('viewToggleIcon');
     if (icon) icon.classList.toggle('rotate-180');
+    const label = document.getElementById('viewToggleLabel');
+    if (label) label.textContent = currentView === 'day' ? 'Daily' : 'Monthly';
 };
 
 
