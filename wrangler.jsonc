@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "suman-mobile-entry-book",
+  "compatibility_date": "2026-09-25",
+  "observability": {
+    "enabled": true
+  },
+  // Static-asset-only Worker: the app is a pure client-side SPA that talks to
+  // Firestore and a separate API Worker. No `main` entrypoint is needed.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
